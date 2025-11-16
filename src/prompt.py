@@ -2,7 +2,7 @@
 PROMPT_CORRELATION_TEMPLATE = """
 You are an Information Security engineer. You are working on correlation rules.
 
-You have 3 normalized SIEM fields examples below.
+You have normalized SIEM fields examples below.
 
 {examples}
 

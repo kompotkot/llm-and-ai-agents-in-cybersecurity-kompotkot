@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "pt-llm-course-kompotkot"
 version = "0.0.1"
@@ -5,10 +9,22 @@ description = "LLM and AI agents in cybersecurity solution by kompotkot"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+    "aiohttp>=3.13.2",
     "numpy>=2.3.4",
     "pydantic>=2.12.4",
     "requests>=2.32.5",
+    "tqdm>=4.67.1",
 ]
+
+[project.scripts]
+main = "src.main:main"
+
+[tool.uv]
+package = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src"]
 
 [dependency-groups]
 dev = [
@@ -16,4 +32,5 @@ dev = [
     "isort>=7.0.0",
     "mypy>=1.18.2",
     "types-requests>=2.32.4.20250913",
+    "types-tqdm>=4.67.0.20250809",
 ]

@@ -1,24 +1,27 @@
+from typing import Any
+
+import aiohttp
+import numpy as np
 import requests
 
 from . import config
 
 
-def get_embedding(text: str) -> list[float]:
+async def get_embedding(text: str) -> np.ndarray[Any, Any]:
     """
     Generates vector embedding for the input text using embedding API.
     """
-    resp = requests.post(
-        f"{config.LLM_API_URI}/{config.LLM_EMBED_PATH}",
-        json={
-            "model": config.LLM_MODEL,
-            "input": text,
-        },
-    )
-
-    if resp.status_code != 200:
-        raise ValueError(f"Failed to get embedding: {resp.status_code} - {resp.text}")
-
-    return resp.json()["embeddings"][0]
+    async with aiohttp.ClientSession() as session:
+        async with session.post(
+            f"{config.LLM_API_URI}/{config.LLM_EMBED_PATH}",
+            json={
+                "model": config.LLM_MODEL,
+                "input": text,
+            },
+        ) as resp:
+            data = await resp.json()
+            embed_array = np.array(data["embeddings"][0], dtype=np.float32)
+            return embed_array / np.linalg.norm(embed_array)
 
 
 def generate_normalized_fields(prompt: str) -> str:
@@ -31,6 +34,7 @@ def generate_normalized_fields(prompt: str) -> str:
         json={
             "model": config.LLM_MODEL,
             "prompt": prompt,
+            "stream": False,
         },
     )
 
