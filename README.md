@@ -29,3 +29,29 @@ windows_correlation_rules.zip/
 4. Make a `git add`, `git commit`, `git push`.
 
 After that, the system will automatically run the check and show the result.
+
+# Описание
+
+Применяемый подход Semantic search + few-shot prompting. Протестирован на локальной Ollama+mistral LLM.
+
+## Использование
+
+Подготовка переменных окружения:
+
+```bash
+# Создание локального файла
+cp .env.sample .env
+
+# Редактирование
+nano .env
+```
+
+Установка зависимостей и запуск приложения:
+
+```bash
+# Установка зависимостей
+uv sync
+
+# Запуск
+uv run main
+```
