@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import Optional
 
 import numpy as np
@@ -11,6 +12,7 @@ class ReferenceItem(BaseModel):
     """
 
     event_text: str  # Original unnormalized event text
+    event_file_path: Path
     norm_text: Optional[str] = None  # Normalized SIEM event text
     embed: Optional[np.ndarray] = None  # Vector embedding of the event text
 

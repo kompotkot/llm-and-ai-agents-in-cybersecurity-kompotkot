@@ -58,6 +58,7 @@ def load_reference_examples(
             references.append(
                 data.ReferenceItem(
                     event_text=event_text,
+                    event_file_path=event_file,
                     norm_text=norm_text,
                 )
             )
@@ -100,10 +101,71 @@ def find_most_similar_reference(
     return [ref_exs[idx] for idx in top_k_indices]
 
 
+async def saturate_with_normalized_files(
+    r: data.ReferenceItem,
+    ref_exs: list[data.ReferenceItem],
+    sem: asyncio.Semaphore,
+    top_k_number: int,
+) -> None:
+    async with sem:
+        if r.embed is None:
+            return
+
+        # Find top-3 most similar reference examples by comparing embeddings
+        most_similar_refs = find_most_similar_reference(
+            r.embed, ref_exs, top_k=top_k_number
+        )
+
+        # Prepare examples list with (event, normalized) pairs
+        examples = [(ref.event_text, ref.norm_text) for ref in most_similar_refs]
+
+        # Generate prompt with event and 3 similar examples
+        prompt_text = prompt.render_prompt_correlation(
+            event=r.event_text,
+            examples=examples,
+        )
+
+        if config.IS_DEBUG:
+            prompt_file = r.event_file_path.with_name(
+                r.event_file_path.name.replace("events_", "prompt_").replace(
+                    ".json", ".txt"
+                )
+            )
+            prompt_file.write_text(prompt_text)
+
+        normalized_fields = await api.generate_normalized_fields(prompt_text)
+
+        # Save normalized fields to file in the same directory as event file
+        norm_file = r.event_file_path.with_name(
+            r.event_file_path.name.replace("events_", "norm_fields_")
+        )
+        norm_file.write_text(normalized_fields)
+
+        if config.IS_DEBUG:
+            print(
+                f"Normalized: {r.event_file_path.name} -> {norm_file.name} (saved to {norm_file.parent})"
+            )
+
+
+async def normalize_fields_semaphore(
+    references: list[data.ReferenceItem],
+    ref_exs: list[data.ReferenceItem],
+    sem_limit: int,
+    top_k_number: int,
+) -> None:
+    sem = asyncio.Semaphore(sem_limit)
+    # Schedule tasks for current batch
+    tasks = [
+        saturate_with_normalized_files(ri, ref_exs, sem, top_k_number)
+        for ri in references
+    ]
+    await tqdm_asyncio.gather(*tasks, desc="Fields normalization", total=len(tasks))
+
+
 def normalize_fields(
     base_path: str,
     ref_exs: list[data.ReferenceItem],
-    top_k_number: int = 1,
+    top_k_number: int = 2,
     sem_limit: int = 5,
 ) -> None:
     """
@@ -124,46 +186,18 @@ def normalize_fields(
             references.append(
                 data.ReferenceItem(
                     event_text=event_text,
+                    event_file_path=event_file,
                 )
             )
-            break  # TODO
-        break  # TODO
 
     print(f"Found {len(references)} references")
 
     # Generate embeddings in batches
     asyncio.run(embeding_generation_semaphore(references, sem_limit))
 
-    for r in references:
-        if r.embed is None:
-            continue
-
-        # Find top-3 most similar reference examples by comparing embeddings
-        most_similar_refs = find_most_similar_reference(
-            r.embed, ref_exs, top_k=top_k_number
-        )
-
-        # Prepare examples list with (event, normalized) pairs
-        examples = [(ref.event_text, ref.norm_text) for ref in most_similar_refs]
-
-        # Generate prompt with event and 3 similar examples
-        prompt_text = prompt.render_prompt_correlation(
-            event=event_text,
-            examples=examples,
-        )
-
-        # Generate normalized fields using LLM
-        normalized_fields = api.generate_normalized_fields(prompt_text)
-
-        # Save normalized fields to file in the same directory as event file
-        norm_file = event_file.with_name(
-            event_file.name.replace("events_", "norm_fields_")
-        )
-        norm_file.write_text(normalized_fields)
-
-        print(
-            f"Normalized: {event_file.name} -> {norm_file.name} (saved to {norm_file.parent})"
-        )
+    asyncio.run(
+        normalize_fields_semaphore(references, ref_exs, sem_limit, top_k_number)
+    )
 
 
 def main():

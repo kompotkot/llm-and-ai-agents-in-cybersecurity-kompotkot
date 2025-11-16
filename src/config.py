@@ -1,5 +1,7 @@
 import os
 
+IS_DEBUG = True
+
 # LLM API configuration
 LLM_API_URI = os.getenv("LLM_API_URI", "http://localhost:11434")
 LLM_EMBED_PATH = os.getenv("LLM_EMBED_PATH", "api/embed")
