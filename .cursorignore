@@ -199,3 +199,4 @@ pyrightconfig.json
 *.env
 *.ps1
 .secrets
+data/
