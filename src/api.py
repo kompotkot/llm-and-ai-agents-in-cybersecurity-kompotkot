@@ -19,12 +19,16 @@ async def get_embedding(text: str) -> np.ndarray[Any, Any]:
                 "input": text,
             },
         ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise ValueError(f"Failed to generate vector embedding: {resp.status}")
+
             data = await resp.json()
             embed_array = np.array(data["embeddings"][0], dtype=np.float32)
             return embed_array / np.linalg.norm(embed_array)
 
 
-async def generate_normalized_fields(prompt: str) -> str:
+async def generate_normalized_fields(system_prompt: str, prompt: str) -> str:
     """
     Generates normalized SIEM fields using LLM API
     and return normalized fields as JSON string.
@@ -34,9 +38,14 @@ async def generate_normalized_fields(prompt: str) -> str:
             f"{config.LLM_API_URI}/{config.LLM_GENERATE_PATH}",
             json={
                 "model": config.LLM_MODEL,
+                "system": system_prompt,
                 "prompt": prompt,
                 "stream": False,
             },
         ) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise ValueError(f"Failed to generate normalized fields: {resp.status}")
+
             data = await resp.json()
             return data["response"]

@@ -26,7 +26,7 @@ async def embeding_generation_semaphore(
 
 
 def load_reference_examples(
-    base_path: str, sem_limit: int = 5
+    base_path: Path, sem_limit: int = 5
 ) -> list[data.ReferenceItem]:
     """
     Loads reference examples from directory structure by finding test directories and processing event files.
@@ -34,11 +34,10 @@ def load_reference_examples(
     Searches for pattern: base_path/*/tests/events_*.json and corresponding norm_fields_*.json files.
     Generates embeddings for each event and creates ReferenceItem objects.
     """
-    base = Path(base_path)
     references: list[data.ReferenceItem] = []
 
     # Iterate through all test directories matching pattern: base_path/*/tests
-    for test_dir in base.glob("*/*/tests"):
+    for test_dir in base_path.glob("*/*/tests"):
         if not test_dir.is_dir():
             continue
 
@@ -106,6 +105,7 @@ async def saturate_with_normalized_files(
     ref_exs: list[data.ReferenceItem],
     sem: asyncio.Semaphore,
     top_k_number: int,
+    system_prompt: str,
 ) -> None:
     async with sem:
         if r.embed is None:
@@ -133,7 +133,9 @@ async def saturate_with_normalized_files(
             )
             prompt_file.write_text(prompt_text)
 
-        normalized_fields = await api.generate_normalized_fields(prompt_text)
+        normalized_fields = await api.generate_normalized_fields(
+            system_prompt, prompt_text
+        )
 
         # Save normalized fields to file in the same directory as event file
         norm_file = r.event_file_path.with_name(
@@ -143,7 +145,7 @@ async def saturate_with_normalized_files(
 
         if config.IS_DEBUG:
             print(
-                f"Normalized: {r.event_file_path.name} -> {norm_file.name} (saved to {norm_file.parent})"
+                f"Normalized: {norm_file.parent.relative_to(config.BASE_DIR)}/{norm_file.name}"
             )
 
 
@@ -152,30 +154,31 @@ async def normalize_fields_semaphore(
     ref_exs: list[data.ReferenceItem],
     sem_limit: int,
     top_k_number: int,
+    system_prompt: str,
 ) -> None:
     sem = asyncio.Semaphore(sem_limit)
     # Schedule tasks for current batch
     tasks = [
-        saturate_with_normalized_files(ri, ref_exs, sem, top_k_number)
+        saturate_with_normalized_files(ri, ref_exs, sem, top_k_number, system_prompt)
         for ri in references
     ]
     await tqdm_asyncio.gather(*tasks, desc="Fields normalization", total=len(tasks))
 
 
 def normalize_fields(
-    base_path: str,
+    base_path: Path,
     ref_exs: list[data.ReferenceItem],
-    top_k_number: int = 2,
+    system_prompt: str,
+    top_k_number: int = 3,
     sem_limit: int = 5,
 ) -> None:
     """
     Normalizes SIEM events by finding similar reference examples and using LLM to generate normalized fields.
     """
-    base = Path(base_path)
     references = []
 
     # Iterate through all test directories matching pattern: base_path/*/tests
-    for test_dir in base.glob("*/tests"):
+    for test_dir in base_path.glob("*/tests"):
         if not test_dir.is_dir():
             continue
 
@@ -196,7 +199,9 @@ def normalize_fields(
     asyncio.run(embeding_generation_semaphore(references, sem_limit))
 
     asyncio.run(
-        normalize_fields_semaphore(references, ref_exs, sem_limit, top_k_number)
+        normalize_fields_semaphore(
+            references, ref_exs, sem_limit, top_k_number, system_prompt
+        )
     )
 
 
@@ -206,8 +211,19 @@ def main():
     ref_exs = load_reference_examples(config.TRAIN_DATA_PATH)
     print(f"Processed {len(ref_exs)} reference examples")
 
+    # Prepare taxonomy system prompt
+    taxonomy_prompt = prompt.load_taxonomy_system_prompt(
+        config.TAXONOMY_RU_PATH, config.TAXONOMY_EN_PATH
+    )
+    if config.IS_DEBUG:
+        system_prompt_file = config.TEST_DATA_PATH / "system_prompt.txt"
+        system_prompt_file.write_text(taxonomy_prompt, encoding="utf-8")
+        print(
+            f"System prompt dumped: {system_prompt_file.relative_to(config.BASE_DIR)}"
+        )
+
     # Generate normalized SIEM fields
-    normalize_fields(config.TEST_DATA_PATH, ref_exs)
+    normalize_fields(config.TEST_DATA_PATH, ref_exs, taxonomy_prompt)
     print("SIEM field generation complete")
 
 
