@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 import numpy as np
@@ -187,7 +188,7 @@ def normalize_fields(
     system_prompt: str,
     top_k_number: int = 2,
     sem_limit: int = 5,
-) -> None:
+) -> list[data.EventPack]:
     """
     Normalizes SIEM events by finding similar reference examples and using LLM to generate normalized fields.
     """
@@ -234,6 +235,59 @@ def normalize_fields(
         )
     )
 
+    return event_packs
+
+
+def _strip_markdown_fence(content: str) -> str:
+    """
+    Remove surrounding markdown ``` fences (optionally with language hints).
+    """
+    stripped = content.strip()
+    if not stripped.startswith("```"):
+        return content
+
+    lines = stripped.splitlines()
+
+    # Drop opening fence with optional language suffix
+    lines = lines[1:]
+    if lines and lines[-1].strip().startswith("```"):
+        lines = lines[:-1]
+
+    cleaned = "\n".join(lines).strip()
+    return cleaned or content
+
+
+def clean_norm_fields(event_packs: list[data.EventPack]) -> None:
+    """
+    Clean JSON file structure from artifacts.
+    """
+    for pack in event_packs:
+        for event in pack.events:
+            event_file_path = pack.pack_path / event.event_file_name
+            norm_file_path = event_file_path.with_name(
+                event_file_path.name.replace("events_", "norm_fields_")
+            )
+
+            if not norm_file_path.exists():
+                continue
+
+            raw_text = norm_file_path.read_text(encoding="utf-8")
+            cleaned_text = _strip_markdown_fence(raw_text)
+
+            try:
+                json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                rel_path = norm_file_path
+                try:
+                    rel_path = norm_file_path.relative_to(config.BASE_DIR)
+                except ValueError:
+                    pass
+                print(f"Invalid JSON: {rel_path}")
+                continue
+
+            if cleaned_text != raw_text:
+                norm_file_path.write_text(cleaned_text, encoding="utf-8")
+
 
 def main():
     # Load all reference examples from the training data directory
@@ -252,9 +306,12 @@ def main():
         )
 
     # Generate normalized SIEM fields
-    normalize_fields(config.TEST_DATA_PATH, reference_packs, taxonomy_prompt)
+    event_packs = normalize_fields(
+        config.TEST_DATA_PATH, reference_packs, taxonomy_prompt
+    )
 
-    print("SIEM field generation complete")
+    # Verify new file is correct JSON
+    clean_norm_fields(event_packs)
 
 
 if __name__ == "__main__":
