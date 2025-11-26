@@ -1,19 +1,32 @@
 from pathlib import Path
-from typing import Optional
+from typing import List, Optional
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
-class ReferenceItem(BaseModel):
+class Event(BaseModel):
     """
-    Data model for storing reference examples with original events,
-    normalized events, and embeddings.
+    Data model for storing events with original text,
+    normalized text and embedding.
     """
+
+    event_file_name: str
 
     event_text: str  # Original unnormalized event text
-    event_file_path: Path
     norm_text: Optional[str] = None  # Normalized SIEM event text
     embed: Optional[np.ndarray] = None  # Vector embedding of the event text
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class EventPack(BaseModel):
+    """
+    Data model for storing packs of events.
+    """
+
+    pack_path: Path
+
+    events: List[Event] = Field(default_factory=list)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-IS_DEBUG = True  # TODO(kompotkot)
+IS_DEBUG = False
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 

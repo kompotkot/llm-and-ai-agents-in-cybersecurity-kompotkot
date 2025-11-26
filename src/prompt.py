@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Iterable, Tuple
+from typing import Iterable, Optional, Tuple
 
 # Prompt template for LLM to normalize SIEM events
 PROMPT_CORRELATION_TEMPLATE = """
@@ -20,13 +20,18 @@ Output ONLY a valid JSON object. No explanations.
 """.strip()
 
 
-def render_prompt_correlation(event: str, examples: Iterable[Tuple[str, str]]) -> str:
+def render_prompt_correlation(
+    event: str, examples: Iterable[Tuple[str, Optional[str]]]
+) -> str:
     """
     Renders a prompt template with event and multiple example pairs.
     """
     # Format examples section
     examples_text_parts = []
     for i, (example_event, example_normalized) in enumerate(examples, 1):
+        if example_normalized is None:
+            continue
+
         examples_text_parts.append(
             f"Example {i} - NOT normalized event JSON:\n{example_event}"
         )
