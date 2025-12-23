@@ -1,14 +1,12 @@
 import os
 from pathlib import Path
 
-IS_DEBUG = False
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # LLM API configuration
+EMBED_API_URI = os.getenv("EMBED_API_URI", "http://localhost:11434")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "mistral")
 LLM_API_URI = os.getenv("LLM_API_URI", "http://localhost:11434")
-LLM_EMBED_PATH = os.getenv("LLM_EMBED_PATH", "api/embed")
-LLM_GENERATE_PATH = os.getenv("LLM_GENERATE_PATH", "api/generate")
 LLM_MODEL = os.getenv("LLM_MODEL", "mistral")
 
 # Data path
@@ -28,3 +26,16 @@ TAXONOMY_EN_PATH = Path(
         "TAXONOMY_EN_PATH", BASE_DIR / "data" / "taxonomy_fields" / "i18n_en.yaml"
     )
 )
+
+MITRE_CTI_PATH = Path(os.getenv("MITRE_CTI_PATH", BASE_DIR / "mitre" / "cti"))
+MITRE_COMPACT_PATTERNS_PATH = Path(
+    os.getenv(
+        "MITRE_COMPACT_PATTERNS_PATH",
+        BASE_DIR / "data" / "mitre" / "mitre_compact_patterns.json",
+    )
+)
+
+# Langfuse configuration
+LANGFUSE_PUBLIC_KEY = os.getenv("LANGFUSE_PUBLIC_KEY")
+LANGFUSE_SECRET_KEY = os.getenv("LANGFUSE_SECRET_KEY")
+LANGFUSE_HOST = os.getenv("LANGFUSE_HOST", "http://localhost:3000")

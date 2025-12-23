@@ -53,5 +53,5 @@ nano .env
 uv sync
 
 # Запуск
-uv run main
+uv run main --help
 ```
