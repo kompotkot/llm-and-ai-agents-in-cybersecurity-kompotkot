@@ -1,9 +1,32 @@
+import logging
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
 from langchain_core.messages import SystemMessage
 
 from . import config
+
+logger = logging.getLogger(__name__)
+
+
+# System prompt
+PROMPT_SYSTEM_TEMPLATE = """
+You are a SIEM normalization assistant.
+""".strip()
+
+
+def load_system_prompt() -> SystemMessage:
+    prompt = PROMPT_SYSTEM_TEMPLATE
+
+    if logger.isEnabledFor(logging.DEBUG):
+        system_prompt_file = config.TEST_DATA_PATH / "system_prompt.txt"
+        system_prompt_file.write_text(prompt, encoding="utf-8")
+        logger.debug(
+            f"System prompt dumped at: {system_prompt_file.relative_to(config.BASE_DIR)}"
+        )
+
+    return SystemMessage(content=prompt)
+
 
 # Prompt template for LLM to normalize SIEM events
 PROMPT_CORRELATION_TEMPLATE = """
@@ -20,15 +43,14 @@ Always:
 === Normalize the following event JSON using the taxonomy rules and examples above ===
 {event}
 
-Output ONLY a valid JSON object. No explanations.
+Output ONLY a valid JSON object in Markdown quotes. No explanations.
 """.strip()
 
 
 def render_prompt_correlation(
     event: str,
     examples: Iterable[Tuple[str, Optional[str]]],
-    event_file_path: str,
-    debug: bool = False,
+    event_file_path: Path,
 ) -> str:
     """
     Renders a prompt template with event and multiple example pairs.
@@ -52,33 +74,14 @@ def render_prompt_correlation(
         event=event, examples=examples_text.strip()
     )
 
-    if debug:
+    if logger.isEnabledFor(logging.DEBUG):
         prompt_file = event_file_path.with_name(
             event_file_path.name.replace("events_", "prompt_").replace(".json", ".txt")
         )
         prompt_file.write_text(prompt, encoding="utf-8")
-        print(f"Prompt dumped at: {prompt_file.relative_to(config.BASE_DIR)}")
+        logger.debug(f"Prompt dumped at: {prompt_file.relative_to(config.BASE_DIR)}")
 
     return prompt
-
-
-# System prompt
-PROMPT_SYSTEM_TEMPLATE = """
-You are a SIEM normalization assistant.
-""".strip()
-
-
-def load_system_prompt(debug: bool = False) -> SystemMessage:
-    prompt = PROMPT_SYSTEM_TEMPLATE
-
-    if debug:
-        system_prompt_file = config.TEST_DATA_PATH / "system_prompt.txt"
-        system_prompt_file.write_text(prompt, encoding="utf-8")
-        print(
-            f"System prompt dumped at: {system_prompt_file.relative_to(config.BASE_DIR)}"
-        )
-
-    return SystemMessage(content=PROMPT_SYSTEM_TEMPLATE)
 
 
 # Taxonomy RU template
@@ -116,7 +119,6 @@ Guidelines:
 def load_taxonomy_prompt(
     ru_path: Path = None,
     en_path: Path = None,
-    debug: bool = False,
 ) -> set[str, str]:
     """
     Compose a system prompt that embeds the SIEM taxonomy in RU and EN.
@@ -127,17 +129,62 @@ def load_taxonomy_prompt(
     en_schema = en_path.read_text(encoding="utf-8")
     taxonomy_en_prompt = PROMPT_TAXONOMY_EN_TEMPLATE.format(en_schema=en_schema.strip())
 
-    if debug:
+    if logger.isEnabledFor(logging.DEBUG):
         taxonomy_ru_prompt_file = config.TEST_DATA_PATH / "taxonomy_ru_prompt.txt"
         taxonomy_ru_prompt_file.write_text(taxonomy_ru_prompt, encoding="utf-8")
-        print(
+        logger.debug(
             f"Taxonomy RU prompt dumped at: {taxonomy_ru_prompt_file.relative_to(config.BASE_DIR)}"
         )
 
         taxonomy_en_prompt_file = config.TEST_DATA_PATH / "taxonomy_en_prompt.txt"
         taxonomy_en_prompt_file.write_text(taxonomy_en_prompt, encoding="utf-8")
-        print(
+        logger.debug(
             f"Taxonomy EN prompt dumped at: {taxonomy_en_prompt_file.relative_to(config.BASE_DIR)}"
         )
 
     return taxonomy_ru_prompt, taxonomy_en_prompt
+
+
+PROMPT_SYSTEM_CLEANUP_TEMPLATE = """
+You are a JSON converter.
+Output ONLY a valid JSON object.
+""".strip()
+
+
+def load_system_clean_prompt() -> SystemMessage:
+    prompt = PROMPT_SYSTEM_CLEANUP_TEMPLATE
+
+    if logger.isEnabledFor(logging.DEBUG):
+        system_prompt_file = config.TEST_DATA_PATH / "system_clean_prompt.txt"
+        system_prompt_file.write_text(prompt, encoding="utf-8")
+        logger.debug(
+            f"System clean prompt dumped at: {system_prompt_file.relative_to(config.BASE_DIR)}"
+        )
+
+    return SystemMessage(content=prompt)
+
+
+PROMPT_CLEANUP_TEMPLATE = """
+Remove Markdown quotes from JSON object:
+{norm_fields}
+""".strip()
+
+
+def load_clean_prompt(
+    norm_fields: str,
+    event_file_path: Path,
+) -> str:
+    prompt = PROMPT_CLEANUP_TEMPLATE.format(norm_fields=norm_fields.strip())
+
+    if logger.isEnabledFor(logging.DEBUG):
+        prompt_file = event_file_path.with_name(
+            event_file_path.name.replace("norm_fields_", "clean_prompt_").replace(
+                ".json", ".txt"
+            )
+        )
+        prompt_file.write_text(prompt, encoding="utf-8")
+        logger.debug(
+            f"Clean prompt dumped at: {prompt_file.relative_to(config.BASE_DIR)}"
+        )
+
+    return prompt

@@ -1,9 +1,13 @@
 import argparse
+import logging
 from pathlib import Path
 
 from langfuse.langchain import CallbackHandler
 
-from . import config, data, orchestration
+from . import agents, config, data
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 def load_test_data(
@@ -45,7 +49,7 @@ def load_test_data(
 
         packs.append(pack)
 
-    print(f"Found {cnt} events in {len(packs)} packs to normalize")
+    logger.info(f"Found {cnt} events in {len(packs)} packs to normalize")
 
     return packs
 
@@ -100,14 +104,17 @@ def load_train_data(
 
         packs.append(pack)
 
-    print(f"Found {cnt} references in {len(packs)} packs")
+    logger.info(f"Found {cnt} references in {len(packs)} packs")
 
     return packs
 
 
 def normalize_handler(args: argparse.Namespace) -> None:
-    # Initialize LLM Agent orchestrator
-    orc = orchestration.Orchestration(debug=args.debug)
+    if args.debug:
+        logging.getLogger("src").setLevel(logging.DEBUG)
+
+    # Initialize LLM Agent for normalization
+    norm_agent = agents.NormalizationAgent()
 
     # Load all reference examples from the training data directory
     train_packs = load_train_data(config.TRAIN_DATA_PATH, args.references)
@@ -117,12 +124,14 @@ def normalize_handler(args: argparse.Namespace) -> None:
 
     # # Prepare taxonomy prompt
     # taxonomy_ru_prompt, taxonomy_en_prompt = prompt.load_taxonomy_prompt(
-    #     config.TAXONOMY_RU_PATH, config.TAXONOMY_EN_PATH, args.debug
+    #     config.TAXONOMY_RU_PATH, config.TAXONOMY_EN_PATH
     # )
 
-    graph = orc.build_graph()
+    graph = norm_agent.build_graph()
 
-    state = orchestration.EmbeddingState(train_packs=train_packs, pred_packs=test_packs)
+    state = agents.NormalizationAgentState(
+        train_packs=train_packs, pred_packs=test_packs
+    )
 
     if args.langfuse:
         langfuse_handler = CallbackHandler()
@@ -137,11 +146,21 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
     if data_path is None:
         data_path = config.TEST_DATA_PATH
 
-    print(f"Operation in path: {data_path}")
+    logger.info(f"Operating at: {data_path}")
 
     cnt = 0
 
-    for test_dir in config.TEST_DATA_PATH.glob("*/tests"):
+    system_prompt = data_path / "system_prompt.txt"
+    if system_prompt.exists():
+        system_prompt.unlink()
+        cnt += 1
+
+    system_clean_prompt = data_path / "system_clean_prompt.txt"
+    if system_clean_prompt.exists():
+        system_clean_prompt.unlink()
+        cnt += 1
+
+    for test_dir in data_path.glob("*/tests"):
         if not test_dir.is_dir():
             continue
 
@@ -153,7 +172,7 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
             nf_file.unlink()
             cnt += 1
 
-        # Scan for prompt field files in current test directory
+        # Scan for prompt files in current test directory
         for prompt_file in test_dir.glob("prompt_*.txt"):
             if not prompt_file.exists():
                 continue
@@ -161,7 +180,15 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
             prompt_file.unlink()
             cnt += 1
 
-    print(f"Removed {cnt} files")
+        # Scan for clean prompt files in current test directory
+        for clean_prompt_file in test_dir.glob("clean_prompt_*.txt"):
+            if not clean_prompt_file.exists():
+                continue
+
+            clean_prompt_file.unlink()
+            cnt += 1
+
+    logger.info(f"Removed {cnt} files")
 
 
 def main() -> None:

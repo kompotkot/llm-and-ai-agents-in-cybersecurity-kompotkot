@@ -7,7 +7,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 EMBED_API_URI = os.getenv("EMBED_API_URI", "http://localhost:11434")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "mistral")
 LLM_API_URI = os.getenv("LLM_API_URI", "http://localhost:11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "mistral")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3:8b")
 
 # Data path
 TRAIN_DATA_PATH = Path(

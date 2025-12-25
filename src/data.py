@@ -15,6 +15,7 @@ class Event(BaseModel):
 
     event_text: str  # Original unnormalized event text
     norm_text: Optional[str] = None  # Normalized SIEM event text
+    norm_text_clean: bool = False
 
     embed: Optional[np.ndarray] = None  # Vector embedding of event/norm text
     prompt: Optional[str] = None  # Prompt to generate normalized SIEM event

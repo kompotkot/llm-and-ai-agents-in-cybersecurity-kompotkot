@@ -830,6 +830,7 @@ dependencies = [
     { name = "langgraph" },
     { name = "numpy" },
     { name = "pydantic" },
+    { name = "tqdm" },
 ]
 
 [package.dev-dependencies]
@@ -847,6 +848,7 @@ requires-dist = [
     { name = "langgraph", specifier = ">=1.0.5" },
     { name = "numpy", specifier = ">=2.3.4" },
     { name = "pydantic", specifier = ">=2.12.4" },
+    { name = "tqdm", specifier = ">=4.67.1" },
 ]
 
 [package.metadata.requires-dev]
