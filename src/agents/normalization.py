@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import List, Optional, Union
 
 import numpy as np
-from langchain_core.messages import BaseMessage, HumanMessage
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -158,7 +158,7 @@ class NormalizationAgent:
         Compute embeddings for each event in a single pack
         and store vectors on the events.
         """
-        for e in packs.events:
+        for e in tqdm(packs.events, desc="Events embed", leave=False):
             event_text = e.event_text
             vector = self.embeddings.embed_query(event_text)
             e.embed = np.array(vector, dtype=np.float32)
@@ -170,7 +170,7 @@ class NormalizationAgent:
         Embed all training events so they can be used
         for similarity-based few-shot selection.
         """
-        for p in state.train_packs:
+        for p in tqdm(state.pred_packs, desc="Train packs embed"):
             self.embed_events(p)
 
         return state
@@ -181,7 +181,7 @@ class NormalizationAgent:
         """
         Embed all prediction events so we can retrieve similar training examples per event.
         """
-        for p in state.pred_packs:
+        for p in tqdm(state.pred_packs, desc="Prediction packs embed"):
             self.embed_events(p)
 
         return state
@@ -219,6 +219,9 @@ class NormalizationAgent:
         Run the main LLM to generate `norm_fields_*.json` files from prepared prompts.
         """
         system_prompt = prompt.load_system_prompt()
+        tax_fields_prompt = prompt.load_taxonomy_fields_prompt()
+        system_prompt_content = system_prompt + "\n" + tax_fields_prompt
+        system_prompt = SystemMessage(content=system_prompt_content)
 
         for pp in tqdm(state.pred_packs, desc="Packs under normalization"):
             for pe in tqdm(pp.events, desc="Events under normalization", leave=False):

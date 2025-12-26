@@ -2,6 +2,7 @@ import logging
 from pathlib import Path
 from typing import Iterable, Optional, Tuple
 
+import yaml
 from langchain_core.messages import SystemMessage
 
 from . import config
@@ -11,11 +12,12 @@ logger = logging.getLogger(__name__)
 
 # System prompt
 PROMPT_SYSTEM_TEMPLATE = """
-You are a SIEM normalization assistant.
+You are a SIEM normalization assistant. Always follow the taxonomy schema 
+when converting raw events into normalized SIEM JSON.
 """.strip()
 
 
-def load_system_prompt() -> SystemMessage:
+def load_system_prompt() -> str:
     prompt = PROMPT_SYSTEM_TEMPLATE
 
     if logger.isEnabledFor(logging.DEBUG):
@@ -25,7 +27,7 @@ def load_system_prompt() -> SystemMessage:
             f"System prompt dumped at: {system_prompt_file.relative_to(config.BASE_DIR)}"
         )
 
-    return SystemMessage(content=prompt)
+    return prompt
 
 
 # Prompt template for LLM to normalize SIEM events
@@ -33,9 +35,10 @@ PROMPT_CORRELATION_TEMPLATE = """
 You already know the complete SIEM taxonomy schema from the system instructions.
 Always:
 1. Read the raw event JSON.
-2. Extract only the important facts required by the taxonomy.
+2. Extract only the important facts required by the taxonomy, ignore null fields.
 3. Map every fact to the canonical SIEM field names and allowed values from the taxonomy.
-4. Produce a flat JSON object with only normalized fields. No free-form comments. Do NOT wrap the result in Markdown fences or triple backticks.
+4. Concatenate the top-level key with a dot.
+5. Produce a flat JSON object with only normalized fields. No free-form comments. Do NOT wrap the result in Markdown fences or triple backticks.
 
 === Reference few-shot pairs ===
 {examples}
@@ -43,7 +46,7 @@ Always:
 === Normalize the following event JSON using the taxonomy rules and examples above ===
 {event}
 
-Output ONLY a valid JSON object in Markdown quotes. No explanations.
+Output ONLY flat valid JSON object. No explanations.
 """.strip()
 
 
@@ -87,13 +90,9 @@ def render_prompt_correlation(
 # Taxonomy RU template
 # TODO(kompotkot): Try to re-write it in RU
 PROMPT_TAXONOMY_RU_TEMPLATE = """
-You are a SIEM normalization assistant. Always follow the taxonomy schema
-provided below when converting raw events into normalized SIEM JSON.
-
 Guidelines:
 - Use only the field names and enumerations defined in the taxonomy.
 - Omit fields that are not relevant.
-- Prefer English field names when both RU/EN are provided.
 - Preserve JSON validity and keep the output flat.
 
 === Taxonomy (RU) ===
@@ -102,13 +101,9 @@ Guidelines:
 
 # Taxonomy EN template
 PROMPT_TAXONOMY_EN_TEMPLATE = """
-You are a SIEM normalization assistant. Always follow the taxonomy schema
-provided below when converting raw events into normalized SIEM JSON.
-
 Guidelines:
 - Use only the field names and enumerations defined in the taxonomy.
 - Omit fields that are not relevant.
-- Prefer English field names when both RU/EN are provided.
 - Preserve JSON validity and keep the output flat.
 
 === Taxonomy (EN) ===
@@ -143,6 +138,36 @@ def load_taxonomy_prompt(
         )
 
     return taxonomy_ru_prompt, taxonomy_en_prompt
+
+
+PROMPT_TAXONOMY_FIELDS_TEMPLATE = """
+Guidelines:
+- Fields separated by comma.
+- Use only the field names and enumerations defined in the taxonomy.
+
+=== Taxonomy Fields ===
+{field_names}
+""".strip()
+
+
+def load_taxonomy_fields_prompt():
+    data = yaml.safe_load(Path(config.TAXONOMY_EN_PATH).read_text(encoding="utf-8"))
+
+    fields = data.get("Fields", {})
+    field_names = list(fields.keys())
+
+    tax_fields_prompt = PROMPT_TAXONOMY_FIELDS_TEMPLATE.format(
+        field_names=", ".join(field_names)
+    )
+
+    if logger.isEnabledFor(logging.DEBUG):
+        tax_fields_prompt_file = config.TEST_DATA_PATH / "taxonomy_fields_prompt.txt"
+        tax_fields_prompt_file.write_text(tax_fields_prompt, encoding="utf-8")
+        logger.debug(
+            f"Taxonomy fields prompt dumped at: {tax_fields_prompt_file.relative_to(config.BASE_DIR)}"
+        )
+
+    return tax_fields_prompt
 
 
 PROMPT_SYSTEM_CLEANUP_TEMPLATE = """
