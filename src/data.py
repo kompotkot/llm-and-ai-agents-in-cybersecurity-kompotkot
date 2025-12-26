@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
@@ -13,14 +13,17 @@ class Event(BaseModel):
 
     event_file_name: str
 
-    event_text: str  # Original unnormalized event text
+    event_text: Optional[str] = None  # Original unnormalized event text
     norm_text: Optional[str] = None  # Normalized SIEM event text
     norm_text_clean: bool = False
 
     embed: Optional[np.ndarray] = None  # Vector embedding of event/norm text
     prompt: Optional[str] = None  # Prompt to generate normalized SIEM event
 
-    mitre: Optional[dict] = None  # MITRE ATT&CK classification result
+    # Mitre
+    norm_fields: Dict[str, Any] = Field(default_factory=dict)
+    filtered_norm_text: Optional[str] = None  # Filtered text by important fields
+    filtered_norm_embed: Optional[np.ndarray] = None  # Vector embedding of filtered tex
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 

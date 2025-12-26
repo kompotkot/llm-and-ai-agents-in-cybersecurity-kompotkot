@@ -4,6 +4,7 @@ from typing import Iterable, Optional, Tuple
 
 import yaml
 from langchain_core.messages import SystemMessage
+from langchain_core.prompts import PromptTemplate
 
 from . import config
 
@@ -213,3 +214,34 @@ def load_clean_prompt(
         )
 
     return prompt
+
+
+a = "You are a cybersecurity detection engineer."
+
+PROMPT_IMPORTANT_FIELDS = PromptTemplate(
+    template=(
+        """
+    You are given Taxonomy guideline list of all possible fields with descriptions for SIEM events.
+
+    Your goal:
+    1. Extract ONLY the fields that are IMPORTANT for understanding adversary behavior.
+    2. Ignore noisy, technical, or purely informational fields.
+    3. Do NOT explain, invent information that is not explicitly present in the list.
+
+    Selection rules:
+    - Prefer fields describing WHAT action was performed (process, command, file, network, registry).
+    - Prefer fields describing HOW it was executed (command line, parent process, execution context).
+    - Prefer fields describing WHO performed the action (account, SID, privilege level).
+    - Prefer fields describing WHERE it happened (host, OS type).
+    - Ignore timestamps unless they indicate ordering or repetition.
+    - Ignore hashes unless they are the only available identifier.
+    - Ignore nulls, internal IDs, message IDs, ingestion metadata, or vendor-specific noise.
+
+    === Taxonomy guideline with fields ===
+    {taxonomy_guideline}
+
+    Output ONLY list of fields, concatenated by comma. No explanations.
+    """
+    ),
+    input_variables=["taxonomy_guideline"],
+)

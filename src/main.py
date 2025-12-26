@@ -2,8 +2,10 @@ import argparse
 import json
 import logging
 from pathlib import Path
+from typing import Any
 
 import yaml
+from langchain_ollama import ChatOllama
 from langfuse.langchain import CallbackHandler
 
 from . import agents, config, data, prompt
@@ -59,6 +61,45 @@ def mitre_compact_patterns(base_path: Path, pats: int = 0) -> list[data.MitrePat
             cnt += 1
 
     return patterns
+
+
+def load_norm_fields(
+    base_path: Path,
+    preds: int = 0,
+) -> list[data.EventPack]:
+    packs: list[data.EventPack] = []
+    cnt = 0
+
+    for test_dir in base_path.glob("*/tests"):
+        if preds != 0 and cnt >= preds:
+            break
+
+        if not test_dir.is_dir():
+            continue
+
+        pack = data.EventPack(pack_path=test_dir.parent, events=[])
+
+        # Scan for norm field files in current test directory
+        for nf_file in test_dir.glob("norm_fields_*.json"):
+            if preds != 0 and cnt >= preds:
+                break
+
+            with nf_file.open(mode="r", encoding="utf-8") as f:
+                nf_data = json.load(f)
+
+            pack.events.append(
+                data.Event(
+                    event_file_name=str(nf_file.relative_to(pack.pack_path)),
+                    norm_fields=nf_data,
+                )
+            )
+            cnt += 1
+
+        packs.append(pack)
+
+    logger.info(f"Found {cnt} norm fields in {len(packs)} packs")
+
+    return packs
 
 
 def load_test_data(
@@ -163,10 +204,11 @@ def correlate_handler(args: argparse.Namespace) -> None:
     if args.debug:
         logging.getLogger("src").setLevel(logging.DEBUG)
 
-    embeddings_path = Path(args.embeddings)
-    if not embeddings_path.is_dir():
-        logger.error(f"There is no embeddings path: {str(embeddings_path)}")
-        return
+    if args.embeddings is not None:
+        embeddings_path = Path(args.embeddings)
+        if not embeddings_path.is_dir():
+            logger.error(f"There is no embeddings path: {str(embeddings_path)}")
+            return
 
     # Generate compact MITRE ATT&CK patterns
     m_patterns = mitre_compact_patterns(config.MITRE_CTI_PATH, args.pats)
@@ -176,14 +218,20 @@ def correlate_handler(args: argparse.Namespace) -> None:
             f"Compact {len(m_patterns)} Mitre patterns at {config.MITRE_COMPACT_PATTERNS_PATH}"
         )
 
+    norm_field_packs = load_norm_fields(config.TEST_DATA_PATH, args.preds)
+
     # Initialize LLM Agent for correlations
     corr_agent = agents.CorrelationAgent(
-        embeddings=args.embeddings, dump_embeddings=args.dump_embeddings
+        filtered_fields_path=args.filtered_fields,
+        embeddings_path=args.embeddings,
+        dump_embeddings=args.dump_embeddings,
     )
 
     graph = corr_agent.build_graph()
 
-    state = agents.CorrelationAgentState(train_mitre_patterns=m_patterns)
+    state = agents.CorrelationAgentState(
+        train_mitre_patterns=m_patterns, norm_field_packs=norm_field_packs
+    )
 
     if args.langfuse:
         langfuse_handler = CallbackHandler()
@@ -223,6 +271,35 @@ def normalize_handler(args: argparse.Namespace) -> None:
             state,
             config={"callbacks": [langfuse_handler]},
         )
+
+
+def taxonomy_fields_handler(args: argparse.Namespace) -> None:
+    data_path = args.path
+    if data_path is None:
+        data_path = config.TEST_DATA_PATH
+
+    tax_path = config.TAXONOMY_EN_PATH
+    if args.path is not None:
+        tax_path = Path(args.path)
+        if not tax_path.exists():
+            logger.error(f"There is not file {str(tax_path)}")
+            return
+
+    data = yaml.safe_load(tax_path.read_text(encoding="utf-8"))
+    taxonomy_text = json.dumps(data, indent="\t", ensure_ascii=False)
+
+    llm = ChatOllama(
+        model=config.LLM_MODEL,
+        base_url=config.LLM_API_URI,
+    )
+
+    chain = prompt.PROMPT_IMPORTANT_FIELDS | llm
+    response = chain.invoke({"taxonomy_guideline": taxonomy_text})
+    filtered_fields = response.replace(" ", "")
+
+    ff_file_path = tax_path.name.replace(".yml", "_filtered_fields.txt")
+    ff_file_path.write_text(filtered_fields, encoding="utf-8")
+    logger.info(f"Dumped filtered fields of Taxonomy guideline to {str(ff_file_path)}")
 
 
 def utils_clean_handler(args: argparse.Namespace) -> None:
@@ -292,11 +369,23 @@ def main() -> None:
         help="Path to directory with embeddings to load from",
     )
     parser_correlate.add_argument(
-        "-p",
+        "-f",
+        "--filtered-fields",
+        type=str,
+        help="Path to file with filtered Taxonomy fields",
+    )
+    parser_correlate.add_argument(
         "--pats",
         type=int,
         default=0,
         help="Amount of files to use for train",
+    )
+    parser_correlate.add_argument(
+        "-p",
+        "--preds",
+        type=int,
+        default=0,
+        help="Amount of files to use for prediction",
     )
     parser_correlate.add_argument(
         "-l",
@@ -347,6 +436,29 @@ def main() -> None:
         help="Set this flag to dump generated embeddings",
     )
     parser_normalize.set_defaults(func=normalize_handler)
+
+    # Taxonomy command parser
+    parser_taxomomy = subcommands.add_parser("taxomomy", description="Agent taxonomy")
+    parser_taxomomy.set_defaults(func=lambda _: parser_taxomomy.print_help())
+    subcommands_taxomomy = parser_taxomomy.add_subparsers(
+        description="Agent taxonomy commands"
+    )
+
+    parser_tax_fields = subcommands_taxomomy.add_parser(
+        "fields", description="Return list of fields from Taxonomy guideline"
+    )
+    parser_tax_fields.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="Set this flag for debug",
+    )
+    parser_tax_fields.add_argument(
+        "-p",
+        "--path",
+        help="Path to Taxonomy guideline file",
+    )
+    parser_tax_fields.set_defaults(func=taxonomy_fields_handler)
 
     # Util command parser
     parser_utils = subcommands.add_parser("utils", description="Agent utils")
