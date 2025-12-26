@@ -6,8 +6,10 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # LLM API configuration
 EMBED_API_URI = os.getenv("EMBED_API_URI", "http://localhost:11434")
 EMBED_MODEL = os.getenv("EMBED_MODEL", "mistral")
+SLM_API_URI = os.getenv("SLM_API_URI", "http://localhost:11434")
+SLM_MODEL = os.getenv("SLM_MODEL", "mistral")
 LLM_API_URI = os.getenv("LLM_API_URI", "http://localhost:11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "deepseek-r1:8b")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3:8b")
 
 # Data path
 TRAIN_DATA_PATH = Path(

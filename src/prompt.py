@@ -172,7 +172,7 @@ def load_taxonomy_fields_prompt():
 
 PROMPT_SYSTEM_CLEANUP_TEMPLATE = """
 You are a JSON converter.
-Output ONLY a valid JSON object.
+Output ONLY a valid flat JSON object.
 """.strip()
 
 
@@ -190,7 +190,7 @@ def load_system_clean_prompt() -> SystemMessage:
 
 
 PROMPT_CLEANUP_TEMPLATE = """
-Remove Markdown quotes from JSON object:
+Remove Markdown quotes, remove null fields and flatten JSON object:
 {norm_fields}
 """.strip()
 

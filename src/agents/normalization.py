@@ -137,12 +137,20 @@ class NormalizationAgent:
         self,
         embeddings_model: Optional[str] = None,
         embeddings_url: Optional[str] = None,
+        slm_model: Optional[str] = None,
+        slm_url: Optional[str] = None,
         llm_model: Optional[str] = None,
         llm_url: Optional[str] = None,
+        dump_embeddings: bool = False,
     ):
         self.embeddings = OllamaEmbeddings(
             model=embeddings_model or config.EMBED_MODEL,
             base_url=embeddings_url or config.EMBED_API_URI,
+        )
+
+        self.slm = ChatOllama(
+            model=slm_model or config.SLM_MODEL,
+            base_url=slm_url or config.SLM_API_URI,
         )
 
         self.llm = ChatOllama(
@@ -153,15 +161,7 @@ class NormalizationAgent:
         self.tools = [remove_markdown_quotes]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
 
-    def embed_events(self, packs: list[data.EventPack]) -> None:
-        """
-        Compute embeddings for each event in a single pack
-        and store vectors on the events.
-        """
-        for e in tqdm(packs.events, desc="Events embed", leave=False):
-            event_text = e.event_text
-            vector = self.embeddings.embed_query(event_text)
-            e.embed = np.array(vector, dtype=np.float32)
+        self.dump_embeddings = dump_embeddings
 
     def embed_train_events(
         self, state: NormalizationAgentState
@@ -170,8 +170,22 @@ class NormalizationAgent:
         Embed all training events so they can be used
         for similarity-based few-shot selection.
         """
-        for p in tqdm(state.pred_packs, desc="Train packs embed"):
-            self.embed_events(p)
+        for pp in tqdm(state.train_packs, desc="Train packs embed"):
+            for pe in tqdm(pp.events, desc="Train events embed", leave=False):
+                vector = self.embeddings.embed_query(pe.event_text)
+                pe.embed = np.array(vector, dtype=np.float32)
+
+                if self.dump_embeddings:
+                    event_file_path = pp.pack_path / pe.event_file_name
+                    embed_file = event_file_path.with_name(
+                        event_file_path.name.replace(
+                            "events_", "embed_train_events_"
+                        ).replace(".json", ".npy")
+                    )
+                    logger.debug(
+                        f"Embed for tain event dumped at: {embed_file.relative_to(config.BASE_DIR)}"
+                    )
+                    np.save(embed_file, pe.embed)
 
         return state
 
@@ -181,8 +195,22 @@ class NormalizationAgent:
         """
         Embed all prediction events so we can retrieve similar training examples per event.
         """
-        for p in tqdm(state.pred_packs, desc="Prediction packs embed"):
-            self.embed_events(p)
+        for pp in tqdm(state.pred_packs, desc="Prediction packs embed"):
+            for pe in tqdm(pp.events, desc="Prediction events embed", leave=False):
+                vector = self.embeddings.embed_query(pe.event_text)
+                pe.embed = np.array(vector, dtype=np.float32)
+
+                if self.dump_embeddings:
+                    event_file_path = pp.pack_path / pe.event_file_name
+                    embed_file = event_file_path.with_name(
+                        event_file_path.name.replace(
+                            "events_", "embed_pred_events_"
+                        ).replace(".json", ".npy")
+                    )
+                    logger.debug(
+                        f"Embed for pred event dumped at: {embed_file.relative_to(config.BASE_DIR)}"
+                    )
+                    np.save(embed_file, pe.embed)
 
         return state
 
@@ -229,7 +257,7 @@ class NormalizationAgent:
                     system_prompt,
                     pe.prompt,
                 ]
-                response = self.llm.invoke(messages)
+                response = self.slm.invoke(messages)
 
                 event_file_path = pp.pack_path / pe.event_file_name
 
