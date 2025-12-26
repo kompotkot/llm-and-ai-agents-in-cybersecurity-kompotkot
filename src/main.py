@@ -163,6 +163,11 @@ def correlate_handler(args: argparse.Namespace) -> None:
     if args.debug:
         logging.getLogger("src").setLevel(logging.DEBUG)
 
+    embeddings_path = Path(args.embeddings)
+    if not embeddings_path.is_dir():
+        logger.error(f"There is no embeddings path: {str(embeddings_path)}")
+        return
+
     # Generate compact MITRE ATT&CK patterns
     m_patterns = mitre_compact_patterns(config.MITRE_CTI_PATH, args.pats)
     with open(config.MITRE_COMPACT_PATTERNS_PATH, "w", encoding="utf-8") as f:
@@ -172,7 +177,9 @@ def correlate_handler(args: argparse.Namespace) -> None:
         )
 
     # Initialize LLM Agent for correlations
-    corr_agent = agents.CorrelationAgent(dump_embeddings=args.dump_embeddings)
+    corr_agent = agents.CorrelationAgent(
+        embeddings=args.embeddings, dump_embeddings=args.dump_embeddings
+    )
 
     graph = corr_agent.build_graph()
 
@@ -277,6 +284,12 @@ def main() -> None:
         "--debug",
         action="store_true",
         help="Set this flag for debug",
+    )
+    parser_correlate.add_argument(
+        "-e",
+        "--embeddings",
+        type=str,
+        help="Path to directory with embeddings to load from",
     )
     parser_correlate.add_argument(
         "-p",

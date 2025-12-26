@@ -36,6 +36,7 @@ class CorrelationAgent:
         slm_url: Optional[str] = None,
         llm_model: Optional[str] = None,
         llm_url: Optional[str] = None,
+        embeddings: Optional[str] = None,
         dump_embeddings: bool = False,
     ):
         self.embeddings = OllamaEmbeddings(
@@ -53,7 +54,33 @@ class CorrelationAgent:
             base_url=llm_url or config.LLM_API_URI,
         )
 
+        self.embeddings: Optional[str] = None
+        if embeddings is not None:
+            self.embeddings = embeddings
+
         self.dump_embeddings = dump_embeddings
+
+    def load_embed_train_mitre_patterns(
+        self, state: CorrelationAgentState
+    ) -> CorrelationAgentState:
+        embeddings_path = Path(self.embeddings)
+        cnt = 0
+
+        for mp in state.train_mitre_patterns:
+            file_path = embeddings_path / f"{mp.external_id.replace('.', '_')}.npy"
+            if not file_path.exists():
+                logging.warning(f"There is not embedding for {mp.external_id}")
+                continue
+
+            mp.embed = np.load(file_path)
+            cnt += 1
+
+        if cnt == 0:
+            raise Exception("Failed to load any embeddings for train mitre patterns")
+
+        logging.info(f"Loaded {cnt} embeddings")
+
+        return state
 
     def embed_train_mitre_patterns(
         self, state: CorrelationAgentState
@@ -82,7 +109,14 @@ class CorrelationAgent:
         builder = StateGraph(CorrelationAgentState)
 
         # Main pipeline nodes
-        builder.add_node("embed_train_mitre_patterns", self.embed_train_mitre_patterns)
+        if self.embeddings is None:
+            builder.add_node(
+                "embed_train_mitre_patterns", self.embed_train_mitre_patterns
+            )
+        else:
+            builder.add_node(
+                "embed_train_mitre_patterns", self.load_embed_train_mitre_patterns
+            )
 
         # The flow
         builder.add_edge(START, "embed_train_mitre_patterns")
