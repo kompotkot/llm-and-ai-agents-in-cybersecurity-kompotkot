@@ -35,3 +35,15 @@ class EventPack(BaseModel):
     events: List[Event] = Field(default_factory=list)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+
+class MitrePattern(BaseModel):
+    external_id: str
+    name: str
+    phases: List[str] = Field(default_factory=list)
+    description: str
+
+    text: str  # Concatenated fields in line
+    embed: Optional[np.ndarray] = None  # Vector embedding of text
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)

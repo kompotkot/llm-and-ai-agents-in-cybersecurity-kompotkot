@@ -1,13 +1,64 @@
 import argparse
+import json
 import logging
 from pathlib import Path
 
+import yaml
 from langfuse.langchain import CallbackHandler
 
-from . import agents, config, data
+from . import agents, config, data, prompt
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+
+def mitre_compact_patterns(base_path: Path, pats: int = 0) -> list[data.MitrePattern]:
+    patterns: list[data.MitrePattern] = []
+    cnt = 0
+
+    for path in base_path.glob("enterprise-attack/attack-pattern/*.json"):
+        if pats != 0 and cnt >= pats:
+            break
+
+        with open(path, "r", encoding="utf-8") as f:
+            bundle = json.load(f)
+
+        # Iterate through objects in the bundle
+        for obj in bundle.get("objects", []):
+            if pats != 0 and cnt >= pats:
+                break
+
+            platforms = obj.get("x_mitre_platforms", [])
+            if "Windows" not in platforms:
+                continue
+
+            ext_id = ""
+            for ref in obj.get("external_references", []):
+                if ref.get("source_name") == "mitre-attack":
+                    ext_id = ref.get("external_id")
+                    break
+
+            phases = []
+            for p in obj.get("kill_chain_phases", []):
+                phases.append(p.get("phase_name"))
+
+            desc = obj.get("description", "")
+            desc = desc.replace("\n", "").strip()
+
+            name = obj.get("name", "")
+            phases_str = ", ".join(phases)
+
+            pattern = data.MitrePattern(
+                external_id=ext_id,
+                name=obj.get("name", ""),
+                phases=phases,
+                description=desc,
+                text=f"{ext_id}. Tactics: {phases_str}. Name: {name}. Description: {desc}",
+            )
+            patterns.append(pattern)
+            cnt += 1
+
+    return patterns
 
 
 def load_test_data(
@@ -36,8 +87,7 @@ def load_test_data(
         for event_file in test_dir.glob("events_*.json"):
             if preds != 0 and cnt >= preds:
                 break
-
-            event_text = event_file.read_text()
+            event_text = event_file.read_text(encoding="utf-8")
 
             pack.events.append(
                 data.Event(
@@ -89,8 +139,8 @@ def load_train_data(
                 continue
 
             # Read event and normalized text files
-            event_text = event_file.read_text()
-            norm_text = norm_file.read_text()
+            event_text = event_file.read_text(encoding="utf-8")
+            norm_text = norm_file.read_text(encoding="utf-8")
 
             pack.events.append(
                 data.Event(
@@ -109,12 +159,39 @@ def load_train_data(
     return packs
 
 
+def correlate_handler(args: argparse.Namespace) -> None:
+    if args.debug:
+        logging.getLogger("src").setLevel(logging.DEBUG)
+
+    # Generate compact MITRE ATT&CK patterns
+    m_patterns = mitre_compact_patterns(config.MITRE_CTI_PATH, args.pats)
+    with open(config.MITRE_COMPACT_PATTERNS_PATH, "w", encoding="utf-8") as f:
+        json.dump([p.model_dump() for p in m_patterns], f)
+        logger.info(
+            f"Compact {len(m_patterns)} Mitre patterns at {config.MITRE_COMPACT_PATTERNS_PATH}"
+        )
+
+    # Initialize LLM Agent for correlations
+    corr_agent = agents.CorrelationAgent(dump_embeddings=args.dump_embeddings)
+
+    graph = corr_agent.build_graph()
+
+    state = agents.CorrelationAgentState(train_mitre_patterns=m_patterns)
+
+    if args.langfuse:
+        langfuse_handler = CallbackHandler()
+        result = graph.invoke(
+            state,
+            config={"callbacks": [langfuse_handler]},
+        )
+
+
 def normalize_handler(args: argparse.Namespace) -> None:
     if args.debug:
         logging.getLogger("src").setLevel(logging.DEBUG)
 
     # Initialize LLM Agent for normalization
-    norm_agent = agents.NormalizationAgent()
+    norm_agent = agents.NormalizationAgent(dump_embeddings=args.dump_embeddings)
 
     # Load all reference examples from the training data directory
     train_packs = load_train_data(config.TRAIN_DATA_PATH, args.references)
@@ -150,51 +227,76 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
 
     cnt = 0
 
-    system_prompt = data_path / "system_prompt.txt"
+    for name in [
+        "system_prompt.txt",
+        "system_clean_prompt.txt",
+        "taxonomy_fields_prompt.txt",
+    ]:
+        system_prompt = data_path / name
     if system_prompt.exists():
         system_prompt.unlink()
-        cnt += 1
-
-    system_clean_prompt = data_path / "system_clean_prompt.txt"
-    if system_clean_prompt.exists():
-        system_clean_prompt.unlink()
         cnt += 1
 
     for test_dir in data_path.glob("*/tests"):
         if not test_dir.is_dir():
             continue
 
-        # Scan for norm field files in current test directory
-        for nf_file in test_dir.glob("norm_fields_*.json"):
-            if not nf_file.exists():
-                continue
+        for name_pattern in [
+            "norm_fields_*.json",
+            "prompt_*.txt",
+            "clean_prompt_*.txt",
+        ]:
+            for f in test_dir.glob(name_pattern):
+                if not f.exists():
+                    continue
 
-            nf_file.unlink()
-            cnt += 1
-
-        # Scan for prompt files in current test directory
-        for prompt_file in test_dir.glob("prompt_*.txt"):
-            if not prompt_file.exists():
-                continue
-
-            prompt_file.unlink()
-            cnt += 1
-
-        # Scan for clean prompt files in current test directory
-        for clean_prompt_file in test_dir.glob("clean_prompt_*.txt"):
-            if not clean_prompt_file.exists():
-                continue
-
-            clean_prompt_file.unlink()
-            cnt += 1
+                f.unlink()
+                cnt += 1
 
     logger.info(f"Removed {cnt} files")
+
+
+def utils_test_handler(args: argparse.Namespace) -> None:
+    if args.debug:
+        logging.getLogger("src").setLevel(logging.DEBUG)
+
+    logger.debug("Test")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Agent CLI")
     parser.set_defaults(func=lambda _: parser.print_help())
     subcommands = parser.add_subparsers(description="Agent commands")
+
+    # Correlate command parser
+    parser_correlate = subcommands.add_parser(
+        "correlate", description="Generate correlation tactics and techniques"
+    )
+    parser_correlate.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="Set this flag for debug",
+    )
+    parser_correlate.add_argument(
+        "-p",
+        "--pats",
+        type=int,
+        default=0,
+        help="Amount of files to use for train",
+    )
+    parser_correlate.add_argument(
+        "-l",
+        "--langfuse",
+        action="store_true",
+        help="Set this flag for langfuse support",
+    )
+    parser_correlate.add_argument(
+        "--dump-embeddings",
+        action="store_true",
+        help="Set this flag to dump generated embeddings",
+    )
+    parser_correlate.set_defaults(func=correlate_handler)
 
     # Normalize command parser
     parser_normalize = subcommands.add_parser(
@@ -226,6 +328,11 @@ def main() -> None:
         default=0,
         help="Amount of files to use for prediction",
     )
+    parser_normalize.add_argument(
+        "--dump-embeddings",
+        action="store_true",
+        help="Set this flag to dump generated embeddings",
+    )
     parser_normalize.set_defaults(func=normalize_handler)
 
     # Util command parser
@@ -242,6 +349,17 @@ def main() -> None:
         help="Path to file with test data",
     )
     parser_utils_clean.set_defaults(func=utils_clean_handler)
+
+    parser_utils_test = subcommands_utils.add_parser(
+        "test", description="For test purposes"
+    )
+    parser_utils_test.add_argument(
+        "-d",
+        "--debug",
+        action="store_true",
+        help="Set this flag for debug",
+    )
+    parser_utils_test.set_defaults(func=utils_test_handler)
 
     args = parser.parse_args()
     args.func(args)
