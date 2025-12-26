@@ -182,9 +182,6 @@ class NormalizationAgent:
                             "events_", "embed_train_events_"
                         ).replace(".json", ".npy")
                     )
-                    logger.debug(
-                        f"Embed for tain event dumped at: {embed_file.relative_to(config.BASE_DIR)}"
-                    )
                     np.save(embed_file, pe.embed)
 
         return state

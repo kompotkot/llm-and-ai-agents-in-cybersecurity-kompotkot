@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,13 @@ def mitre_compact_patterns(base_path: Path, pats: int = 0) -> list[data.MitrePat
 
             desc = obj.get("description", "")
             desc = desc.replace("\n", "").strip()
+
+            # Remove citations from desc (format: (Citation: ...))
+            desc = re.sub(r"\(Citation:[^)]+\)", "", desc)
+            # Remove urls from desc
+            desc = re.sub(r"https?://[^\s\)]+", "", desc)
+            # Clean up extra spaces that may result from removals
+            desc = re.sub(r"\s+", " ", desc).strip()
 
             name = obj.get("name", "")
             phases_str = ", ".join(phases)
@@ -204,10 +212,12 @@ def correlate_handler(args: argparse.Namespace) -> None:
     if args.debug:
         logging.getLogger("src").setLevel(logging.DEBUG)
 
-    if args.embeddings is not None:
-        embeddings_path = Path(args.embeddings)
-        if not embeddings_path.is_dir():
-            logger.error(f"There is no embeddings path: {str(embeddings_path)}")
+    if args.embeddings_mitre is not None:
+        embeddings_mitre_path = Path(args.embeddings_mitre)
+        if not embeddings_mitre_path.is_dir():
+            logger.error(
+                f"There is no embeddings mitre path: {str(embeddings_mitre_path)}"
+            )
             return
 
     # Generate compact MITRE ATT&CK patterns
@@ -223,7 +233,7 @@ def correlate_handler(args: argparse.Namespace) -> None:
     # Initialize LLM Agent for correlations
     corr_agent = agents.CorrelationAgent(
         filtered_fields_path=args.filtered_fields,
-        embeddings_path=args.embeddings,
+        embeddings_mitre_path=args.embeddings_mitre,
         dump_embeddings=args.dump_embeddings,
     )
 
@@ -363,10 +373,9 @@ def main() -> None:
         help="Set this flag for debug",
     )
     parser_correlate.add_argument(
-        "-e",
-        "--embeddings",
+        "--embeddings-mitre",
         type=str,
-        help="Path to directory with embeddings to load from",
+        help="Path to directory with mitre embeddings to load from",
     )
     parser_correlate.add_argument(
         "-f",

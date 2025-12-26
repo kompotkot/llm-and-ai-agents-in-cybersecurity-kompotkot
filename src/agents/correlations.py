@@ -40,7 +40,7 @@ class CorrelationAgent:
         llm_model: Optional[str] = None,
         llm_url: Optional[str] = None,
         filtered_fields_path: Optional[str] = None,
-        embeddings_path: Optional[str] = None,
+        embeddings_mitre_path: Optional[str] = None,
         dump_embeddings: bool = False,
     ):
         self.elm = OllamaEmbeddings(
@@ -67,20 +67,22 @@ class CorrelationAgent:
             """
             raise Exception("Not in pipeline")
 
-        self.embeddings_path: Optional[str] = None
-        if embeddings_path is not None:
-            self.embeddings_path = embeddings_path
+        self.embeddings_mitre_path: Optional[str] = None
+        if embeddings_mitre_path is not None:
+            self.embeddings_mitre_path = embeddings_mitre_path
 
         self.dump_embeddings = dump_embeddings
 
     def load_embed_train_mitre_patterns(
         self, state: CorrelationAgentState
     ) -> CorrelationAgentState:
-        embeddings_path = Path(self.embeddings_path)
+        embeddings_mitre_path = Path(self.embeddings_mitre_path)
         cnt = 0
 
         for mp in state.train_mitre_patterns:
-            file_path = embeddings_path / f"{mp.external_id.replace('.', '_')}.npy"
+            file_path = (
+                embeddings_mitre_path / f"{mp.external_id.replace('.', '_')}.npy"
+            )
             if not file_path.exists():
                 logging.warning(f"There is not embedding for {mp.external_id}")
                 continue
@@ -137,8 +139,13 @@ class CorrelationAgent:
                 filtered_items = []
                 for key, value in pe.norm_fields.items():
                     if key in state.filtered_fields:
+                        # Convert keys like subject.account.name -> Subject Account Name
+                        converted_key = " ".join(
+                            part.capitalize().replace("_", " ")
+                            for part in key.split(".")
+                        )
                         # Concatenate them in string like key: value separated by comma
-                        filtered_items.append(f"{key}: {value}")
+                        filtered_items.append(f"{converted_key}: {value}")
 
                 event_file_path = pp.pack_path / pe.event_file_name
 
@@ -149,7 +156,7 @@ class CorrelationAgent:
                     continue
 
                 pe.filtered_norm_text = (
-                    ", ".join(filtered_items) if filtered_items else ""
+                    ", ".join(filtered_items).strip() if filtered_items else ""
                 )
 
                 if logger.isEnabledFor(logging.DEBUG):
@@ -162,6 +169,32 @@ class CorrelationAgent:
 
         return state
 
+    def embed_filter_norm_fields(
+        self, state: CorrelationAgentState
+    ) -> CorrelationAgentState:
+        for pp in tqdm(state.norm_field_packs, desc="Filtered packs embed"):
+            for pe in tqdm(pp.events, desc="Filtered norm fields embed", leave=False):
+                event_file_path = pp.pack_path / pe.event_file_name
+
+                if not pe.filtered_norm_text:
+                    raise Exception(
+                        f"There is no filtered norm text for {str(event_file_path)}"
+                    )
+
+                vector = self.elm.embed_query(pe.filtered_norm_text)
+                pe.filtered_norm_embed = np.array(vector, dtype=np.float32)
+
+                if self.dump_embeddings:
+                    embed_file = event_file_path.with_name(
+                        event_file_path.name.replace(
+                            "norm_fields_", "embed_filtered_norm_fields_"
+                        ).replace(".json", ".npy")
+                    )
+
+                    np.save(embed_file, pe.filtered_norm_embed)
+
+        return state
+
     def build_graph(self):
         """
         Assemble and compile the full workflow graph.
@@ -169,7 +202,7 @@ class CorrelationAgent:
         builder = StateGraph(CorrelationAgentState)
 
         # Main pipeline nodes
-        if self.embeddings_path is None:
+        if self.embeddings_mitre_path is None:
             builder.add_node(
                 "embed_train_mitre_patterns", self.embed_train_mitre_patterns
             )
@@ -179,11 +212,13 @@ class CorrelationAgent:
             )
         builder.add_node("filtered_fields", self.load_filtered_fields)
         builder.add_node("filter_norm_fields", self.filter_norm_fields)
+        builder.add_node("embed_filter_norm_fields", self.embed_filter_norm_fields)
 
         # The flow
         builder.add_edge(START, "embed_train_mitre_patterns")
         builder.add_edge("embed_train_mitre_patterns", "filtered_fields")
         builder.add_edge("filtered_fields", "filter_norm_fields")
-        builder.add_edge("embed_train_mitre_patterns", END)
+        builder.add_edge("filter_norm_fields", "embed_filter_norm_fields")
+        builder.add_edge("embed_filter_norm_fields", END)
 
         return builder.compile()
