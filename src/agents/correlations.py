@@ -1,20 +1,174 @@
 import json
 import logging
+from collections import defaultdict
 from pathlib import Path
-from typing import List, Optional, Set
+from typing import List, Optional, Set, Tuple
 
 import numpy as np
-from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
-from langchain_core.tools import tool
 from langchain_ollama import ChatOllama, OllamaEmbeddings
-from langgraph.graph import END, START, MessagesState, StateGraph
-from langgraph.prebuilt import ToolNode, tools_condition
+from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
+from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 
-from .. import config, data, prompt
+from .. import config, data
 
 logger = logging.getLogger(__name__)
+
+
+def build_dd_index(pats: List[data.MitrePattern]) -> NearestNeighbors:
+    """
+    Build retrieval index.
+    """
+    X = np.vstack([p.embed for p in pats])
+
+    nn = NearestNeighbors(n_neighbors=10, metric="cosine")
+    nn.fit(X)
+
+    return nn
+
+
+def retrieve_top_k(
+    nn: NearestNeighbors,
+    pats: List[data.MitrePattern],
+    filtered_norm_embed: np.ndarray,
+    k: int = 5,
+) -> List[data.Top5Tech]:
+    """
+    Find Top-k technique for one normal field event.
+    """
+    distances, indices = nn.kneighbors(
+        filtered_norm_embed.reshape(1, -1), n_neighbors=k
+    )
+
+    top_5_techs: List[data.Top5Tech] = []
+    for dist, i in zip(distances[0], indices[0]):
+        top_5_techs.append(
+            data.Top5Tech(
+                external_id=pats[i].external_id,
+                score=float(1.0 - dist),  # cosine similarity
+            )
+        )
+
+    return top_5_techs
+
+
+def select_technique(
+    event: data.Event, delta: float = 0.02
+) -> Tuple[str, Optional[str], float]:
+    """
+    Select MITRE technique.
+    """
+
+    if len(event.top_5_techs) == 0:
+        raise ValueError("Event has no top_5_techs")
+
+    # Group by family
+    families: dict[str, list[data.Top5Tech]] = defaultdict(list)
+    for tech in event.top_5_techs:
+        # T1055.012 -> T1055
+        fam = tech.external_id.split(".")[0]
+        families[fam].append(tech)
+
+    # Select best family by max score
+    best_family = None
+    best_family_score = -1.0
+    best_family_techs: list[data.Top5Tech] = []
+
+    for fam, techs in families.items():
+        fam_score = max(t.score for t in techs)
+
+        if fam_score > best_family_score:
+            best_family = fam
+            best_family_score = fam_score
+            best_family_techs = techs
+
+    # Sort subtechniques inside the selected family
+    sorted_subs = sorted(best_family_techs, key=lambda t: t.score, reverse=True)
+
+    # Decide whether to emit subtechnique
+    if len(sorted_subs) >= 2:
+        score_diff = sorted_subs[0].score - sorted_subs[1].score
+
+        if score_diff >= delta:
+            return (best_family, sorted_subs[0].external_id, best_family_score)
+
+    # Fallback: family only
+    return best_family, None, best_family_score
+
+
+def select_pack_technique(
+    pack: data.EventPack,
+    delta: float = 0.02,
+    k: int = 5,
+) -> Tuple[str, Optional[str], float]:
+    """
+    Select Mitre technique for the pack by aggregating evidence
+    from all events in the pack.
+
+    Strategy:
+    - aggregate by family using SUM of scores across events
+    - pick best family, then best technique/sub-tech inside that family
+    - emit sub-tech only if it clearly wins inside the family
+    """
+    if not pack.events:
+        raise ValueError("Pack has no events")
+
+    family_scores: dict[str, float] = defaultdict(float)
+    tech_scores: dict[str, float] = defaultdict(float)
+
+    used_events = 0
+    for pe in pack.events:
+        if not pe.top_5_techs:
+            continue
+
+        used_events += 1
+        for t in pe.top_5_techs[:k]:
+            fam = t.external_id.split(".")[0]
+            family_scores[fam] += t.score
+            tech_scores[t.external_id] += t.score
+
+    if used_events == 0:
+        raise ValueError("Pack has no events with top_5_techs")
+
+    best_family = max(family_scores.items(), key=lambda kv: kv[1])[0]
+    fam_prefix = best_family + "."
+
+    in_family = {
+        tech_id: score
+        for tech_id, score in tech_scores.items()
+        if tech_id == best_family or tech_id.startswith(fam_prefix)
+    }
+
+    if not in_family:
+        in_family = {best_family: family_scores[best_family]}
+
+    sorted_family_techs = sorted(
+        in_family.items(),
+        key=lambda kv: kv[1],
+        reverse=True,
+    )
+
+    best_tech_id, best_tech_score = sorted_family_techs[0]
+    second_score = sorted_family_techs[1][1] if len(sorted_family_techs) > 1 else -1.0
+
+    fam_event_scores: list[float] = []
+    for pe in pack.events:
+        if not pe.top_5_techs:
+            continue
+        best = 0.0
+        for t in pe.top_5_techs[:k]:
+            if t.external_id == best_family or t.external_id.startswith(fam_prefix):
+                if t.score > best:
+                    best = t.score
+        fam_event_scores.append(best)
+
+    confidence = float(sum(fam_event_scores) / max(len(fam_event_scores), 1))
+
+    if "." in best_tech_id and (best_tech_score - second_score) >= delta:
+        return best_family, best_tech_id, confidence
+
+    return best_family, None, confidence
 
 
 class CorrelationAgentState(BaseModel):
@@ -93,7 +247,7 @@ class CorrelationAgent:
         if cnt == 0:
             raise Exception("Failed to load any embeddings for train mitre patterns")
 
-        logging.info(f"Loaded {cnt} embeddings")
+        logging.info(f"Loaded {cnt} mitre embeddings")
 
         return state
 
@@ -133,6 +287,7 @@ class CorrelationAgent:
         return state
 
     def filter_norm_fields(self, state: CorrelationAgentState) -> CorrelationAgentState:
+        cnt = 0
         for pp in tqdm(state.norm_field_packs, desc="Packs filtering"):
             for pe in tqdm(pp.events, desc="Norm fields filtering", leave=False):
                 # Filter keys from pe.norm_fields by state.filtered_fields
@@ -167,6 +322,10 @@ class CorrelationAgent:
                     )
                     ff_norm_file.write_text(pe.filtered_norm_text, encoding="utf-8")
 
+                cnt += 1
+
+        logger.info(f"Filtered {cnt} norm fields")
+
         return state
 
     def embed_filter_norm_fields(
@@ -195,6 +354,84 @@ class CorrelationAgent:
 
         return state
 
+    def calc_neighbors_tech(
+        self, state: CorrelationAgentState
+    ) -> CorrelationAgentState:
+        nn_index = build_dd_index(state.train_mitre_patterns)
+
+        cnt = 0
+        for pp in state.norm_field_packs:
+            for pe in pp.events:
+                top_5_techs = retrieve_top_k(
+                    nn_index, state.train_mitre_patterns, pe.filtered_norm_embed, k=5
+                )
+
+                pe.top_5_techs = top_5_techs
+
+                # Keep per-event decision (useful for debugging), but final output is per-pack.
+                technique, sub_technique, confidence = select_technique(pe)
+                pe.tech_id = technique
+                pe.sub_tech_id = sub_technique
+                pe.tech_score = confidence
+
+                if technique is None:
+                    logger.warning(
+                        f"There is no technique for event {pe.event_file_name}"
+                    )
+
+                cnt += 1
+
+            pack_tech, pack_subtech, pack_conf = select_pack_technique(pp)
+            pp.pack_tech_id = pack_tech
+            pp.pack_sub_tech_id = pack_subtech
+            pp.pack_tech_score = pack_conf
+
+        logger.info(f"Found {cnt} tactics")
+
+        return state
+
+    def dump_tech(self, state: CorrelationAgentState) -> CorrelationAgentState:
+        mitre_by_id = {p.external_id: p for p in state.train_mitre_patterns}
+
+        cnt = 0
+        for pp in state.norm_field_packs:
+            tactics: set[str] = set()
+
+            technique_name = ""
+            sub_technique_name = ""
+
+            if pp.pack_tech_id and pp.pack_tech_id in mitre_by_id:
+                pattern = mitre_by_id[pp.pack_tech_id]
+                technique_name = pattern.name
+                tactics.update(pattern.phases)
+
+            if pp.pack_sub_tech_id and pp.pack_sub_tech_id in mitre_by_id:
+                pattern = mitre_by_id[pp.pack_sub_tech_id]
+                sub_technique_name = pattern.name
+                tactics.update(pattern.phases)
+
+            technique_full = technique_name
+            if sub_technique_name:
+                technique_full = f"{technique_name}: {sub_technique_name}"
+
+            output = {
+                "technique": technique_full,
+                "tactic": ", ".join(sorted(tactics)),
+                "importance": "low, medium, high",
+            }
+
+            tests_dir = pp.pack_path / "tests"
+            answer_file = tests_dir / "answer.json"
+
+            with answer_file.open("w", encoding="utf-8") as f:
+                json.dump(output, f)
+
+            cnt += 1
+
+        logger.info(f"Dumped {cnt} answers")
+
+        return state
+
     def build_graph(self):
         """
         Assemble and compile the full workflow graph.
@@ -213,12 +450,16 @@ class CorrelationAgent:
         builder.add_node("filtered_fields", self.load_filtered_fields)
         builder.add_node("filter_norm_fields", self.filter_norm_fields)
         builder.add_node("embed_filter_norm_fields", self.embed_filter_norm_fields)
+        builder.add_node("calc_neighbors_tech", self.calc_neighbors_tech)
+        builder.add_node("dump_tech", self.dump_tech)
 
         # The flow
         builder.add_edge(START, "embed_train_mitre_patterns")
         builder.add_edge("embed_train_mitre_patterns", "filtered_fields")
         builder.add_edge("filtered_fields", "filter_norm_fields")
         builder.add_edge("filter_norm_fields", "embed_filter_norm_fields")
-        builder.add_edge("embed_filter_norm_fields", END)
+        builder.add_edge("embed_filter_norm_fields", "calc_neighbors_tech")
+        builder.add_edge("calc_neighbors_tech", "dump_tech")
+        builder.add_edge("dump_tech", END)
 
         return builder.compile()

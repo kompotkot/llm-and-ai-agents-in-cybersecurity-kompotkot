@@ -5,6 +5,11 @@ import numpy as np
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class Top5Tech(BaseModel):
+    external_id: str
+    score: float
+
+
 class Event(BaseModel):
     """
     Data model for storing events with original text,
@@ -23,7 +28,14 @@ class Event(BaseModel):
     # Mitre
     norm_fields: Dict[str, Any] = Field(default_factory=dict)
     filtered_norm_text: Optional[str] = None  # Filtered text by important fields
-    filtered_norm_embed: Optional[np.ndarray] = None  # Vector embedding of filtered tex
+    filtered_norm_embed: Optional[np.ndarray] = (
+        None  # Vector embedding of filtered text
+    )
+
+    top_5_techs: List[Top5Tech] = Field(default_factory=list)
+    tech_id: Optional[str] = None
+    sub_tech_id: Optional[str] = None
+    tech_score: Optional[float] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
@@ -36,6 +48,10 @@ class EventPack(BaseModel):
     pack_path: Path
 
     events: List[Event] = Field(default_factory=list)
+
+    pack_tech_id: Optional[str] = None
+    pack_sub_tech_id: Optional[str] = None
+    pack_tech_score: Optional[float] = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
