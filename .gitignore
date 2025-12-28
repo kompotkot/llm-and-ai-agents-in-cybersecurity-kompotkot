@@ -200,3 +200,4 @@ pyrightconfig.json
 *.ps1
 .secrets
 data/
+output/

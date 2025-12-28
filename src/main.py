@@ -372,6 +372,65 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
     logger.info(f"Removed {cnt} files")
 
 
+def utils_dump_handler(args: argparse.Namespace) -> None:
+    output_dir = Path(args.output_dir)
+    if not output_dir.is_dir():
+        logger.error(f"There is no directory {output_dir}")
+        return
+
+    output_correlation_dir = output_dir / "windows_correlation_rules"
+    output_correlation_dir.mkdir(parents=True, exist_ok=True)
+    logger.info(
+        f"Created output correlation directory at {str(output_correlation_dir)}"
+    )
+
+    data_dir = config.BASE_DIR / "data" / "windows_correlation_rules"
+
+    for correlation_dir in data_dir.glob("correlation_*"):
+        if not correlation_dir.is_dir():
+            continue
+
+        # Create in output_dir same correlation_* dir
+        output_corr_dir = output_correlation_dir / correlation_dir.name
+        output_corr_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy in it correlation_*/answer.json
+        answer_file = correlation_dir / "answer.json"
+        if answer_file.exists():
+            (output_corr_dir / "answer.json").write_text(
+                answer_file.read_text(encoding="utf-8"), encoding="utf-8"
+            )
+
+        # Create in it correlation_*/tests dir
+        output_tests_dir = output_corr_dir / "tests"
+        output_tests_dir.mkdir(parents=True, exist_ok=True)
+
+        # Copy in it correlation_*/tests/events_*.json
+        source_tests_dir = correlation_dir / "tests"
+        if source_tests_dir.is_dir():
+            for event_file in source_tests_dir.glob("events_*.json"):
+                (output_tests_dir / event_file.name).write_text(
+                    event_file.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+
+        # Copy in it correlation_*/tests/norm_fields_*.json
+        if source_tests_dir.is_dir():
+            for norm_file in source_tests_dir.glob("norm_fields_*.json"):
+                (output_tests_dir / norm_file.name).write_text(
+                    norm_file.read_text(encoding="utf-8"), encoding="utf-8"
+                )
+
+        # Create in it correlation_*/i18n dir
+        output_i18n_dir = output_corr_dir / "i18n"
+        output_i18n_dir.mkdir(parents=True, exist_ok=True)
+
+        # TODO(kompotkot): Finish it
+        (output_i18n_dir / "i18n_en.yaml").touch()
+        (output_i18n_dir / "i18n_ru.yaml").touch()
+
+    logger.info(f"Dumped correlation rules to {str(output_correlation_dir)}")
+
+
 def utils_test_handler(args: argparse.Namespace) -> None:
     if args.debug:
         logging.getLogger("src").setLevel(logging.DEBUG)
@@ -515,6 +574,15 @@ def main() -> None:
         help="Set this flag do delete embeddings",
     )
     parser_utils_clean.set_defaults(func=utils_clean_handler)
+
+    parser_utils_dump = subcommands_utils.add_parser("dump", description="Dump result")
+    parser_utils_dump.add_argument(
+        "-o",
+        "--output-dir",
+        required=True,
+        help="Path to directory to dump results",
+    )
+    parser_utils_dump.set_defaults(func=utils_dump_handler)
 
     parser_utils_test = subcommands_utils.add_parser(
         "test", description="For test purposes"
