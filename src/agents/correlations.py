@@ -7,9 +7,11 @@ from typing import List, Optional, Set, Tuple
 
 import numpy as np
 from langchain_core.messages import BaseMessage, HumanMessage
-from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
+from sentence_transformers import SentenceTransformer
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 
@@ -193,30 +195,25 @@ class CorrelationAgentState(BaseModel):
 class CorrelationAgent:
     def __init__(
         self,
-        embeddings_model: Optional[str] = None,
-        embeddings_url: Optional[str] = None,
-        slm_model: Optional[str] = None,
-        slm_url: Optional[str] = None,
         llm_model: Optional[str] = None,
         llm_url: Optional[str] = None,
         filtered_fields_path: Optional[str] = None,
         embeddings_mitre_path: Optional[str] = None,
         dump_embeddings: bool = False,
     ):
-        self.elm = OllamaEmbeddings(
-            model=embeddings_model or config.EMBED_MODEL,
-            base_url=embeddings_url or config.EMBED_API_URI,
-        )
+        self.embed_model = SentenceTransformer(config.EMBED_MODEL)
 
-        self.slm = ChatOllama(
-            model=slm_model or config.SLM_MODEL,
-            base_url=slm_url or config.SLM_API_URI,
-        )
-
-        self.llm = ChatOllama(
-            model=llm_model or config.LLM_MODEL,
-            base_url=llm_url or config.LLM_API_URI,
-        )
+        if config.LLM_API_KEY is not None:
+            self.llm = ChatOpenAI(
+                model=config.LLM_MODEL,
+                api_key=config.LLM_API_KEY,
+                base_url=config.LLM_API_URI,
+            )
+        else:
+            self.llm = ChatOllama(
+                model=llm_model or config.LLM_MODEL,
+                base_url=llm_url or config.LLM_API_URI,
+            )
 
         self.filtered_fields_path: Optional[str] = None
         if filtered_fields_path is not None:
@@ -264,7 +261,11 @@ class CorrelationAgent:
         Embed all training Mitre patterns.
         """
         for mp in tqdm(state.train_mitre_patterns, desc="Train mitre patterns embed"):
-            vector = self.elm.embed_query(mp.text)
+            vector = self.embed_model.encode(
+                mp.text,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
             mp.embed = np.array(vector, dtype=np.float32)
 
             if self.dump_embeddings:
@@ -346,7 +347,11 @@ class CorrelationAgent:
                         f"There is no filtered norm text for {str(event_file_path)}"
                     )
 
-                vector = self.elm.embed_query(pe.filtered_norm_text)
+                vector = self.embed_model.encode(
+                    pe.filtered_norm_text,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
                 pe.filtered_norm_embed = np.array(vector, dtype=np.float32)
 
                 if self.dump_embeddings:

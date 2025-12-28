@@ -6,10 +6,12 @@ from typing import List, Optional, Union
 import numpy as np
 from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import tool
-from langchain_ollama import ChatOllama, OllamaEmbeddings
+from langchain_ollama import ChatOllama
+from langchain_openai import ChatOpenAI
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 from pydantic import BaseModel, Field
+from sentence_transformers import SentenceTransformer
 from tqdm import tqdm
 
 from .. import config, data, prompt
@@ -18,31 +20,27 @@ logger = logging.getLogger(__name__)
 
 
 def find_most_similar_embed(
-    embed: np.ndarray, train_events: list[data.Event], top_k: int = 2
+    embed: np.ndarray,
+    train_events: list[data.Event],
+    top_k: int = 2,
 ) -> list[data.Event]:
     """
     Finds the top-k most similar reference examples
-    by comparing cosine similarity of embeddings.
+    using cosine similarity (dot product of normalized vectors).
     """
-    if len(train_events) < top_k:
-        top_k = len(train_events)
+    candidates = [e for e in train_events if e.embed is not None]
 
-    # Calculate cosine similarity with all reference embeddings
-    similarities = []
-    for e in train_events:
-        if e.embed is None:
-            continue
-        similarity = np.dot(embed, e.embed)
-        similarities.append(similarity)
+    if not candidates:
+        return []
 
-    # Find indices of top-k most similar references
-    similarities_array = np.array(similarities)
-    top_k_indices = np.argpartition(similarities_array, -top_k)[-top_k:]
+    top_k = min(top_k, len(candidates))
 
-    # Sort by similarity in descending order
-    top_k_indices = top_k_indices[np.argsort(similarities_array[top_k_indices])[::-1]]
+    similarities = np.array([np.dot(embed, e.embed) for e in candidates])
 
-    return [train_events[idx] for idx in top_k_indices]
+    top_k_indices = np.argpartition(similarities, -top_k)[-top_k:]
+    top_k_indices = top_k_indices[np.argsort(similarities[top_k_indices])[::-1]]
+
+    return [candidates[i] for i in top_k_indices]
 
 
 def verify_json_structure(raw_text: Union[str, dict]) -> Optional[dict]:
@@ -135,28 +133,30 @@ class NormalizationAgentState(BaseModel):
 class NormalizationAgent:
     def __init__(
         self,
-        embeddings_model: Optional[str] = None,
-        embeddings_url: Optional[str] = None,
         slm_model: Optional[str] = None,
         slm_url: Optional[str] = None,
         llm_model: Optional[str] = None,
         llm_url: Optional[str] = None,
         dump_embeddings: bool = False,
     ):
-        self.embeddings = OllamaEmbeddings(
-            model=embeddings_model or config.EMBED_MODEL,
-            base_url=embeddings_url or config.EMBED_API_URI,
-        )
+        self.embed_model = SentenceTransformer(config.EMBED_MODEL)
 
         self.slm = ChatOllama(
             model=slm_model or config.SLM_MODEL,
             base_url=slm_url or config.SLM_API_URI,
         )
 
-        self.llm = ChatOllama(
-            model=llm_model or config.LLM_MODEL,
-            base_url=llm_url or config.LLM_API_URI,
-        )
+        if config.LLM_API_KEY is not None:
+            self.llm = ChatOpenAI(
+                model=config.LLM_MODEL,
+                api_key=config.LLM_API_KEY,
+                base_url=config.LLM_API_URI,
+            )
+        else:
+            self.llm = ChatOllama(
+                model=llm_model or config.LLM_MODEL,
+                base_url=llm_url or config.LLM_API_URI,
+            )
 
         self.tools = [remove_markdown_quotes]
         self.llm_with_tools = self.llm.bind_tools(self.tools)
@@ -172,7 +172,11 @@ class NormalizationAgent:
         """
         for pp in tqdm(state.train_packs, desc="Train packs embed"):
             for pe in tqdm(pp.events, desc="Train events embed", leave=False):
-                vector = self.embeddings.embed_query(pe.event_text)
+                vector = self.embed_model.encode(
+                    pe.event_text,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
                 pe.embed = np.array(vector, dtype=np.float32)
 
                 if self.dump_embeddings:
@@ -194,7 +198,11 @@ class NormalizationAgent:
         """
         for pp in tqdm(state.pred_packs, desc="Prediction packs embed"):
             for pe in tqdm(pp.events, desc="Prediction events embed", leave=False):
-                vector = self.embeddings.embed_query(pe.event_text)
+                vector = self.embed_model.encode(
+                    pe.event_text,
+                    normalize_embeddings=True,
+                    show_progress_bar=False,
+                )
                 pe.embed = np.array(vector, dtype=np.float32)
 
                 if self.dump_embeddings:

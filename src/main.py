@@ -242,12 +242,14 @@ def correlate_handler(args: argparse.Namespace) -> None:
         train_mitre_patterns=m_patterns, norm_field_packs=norm_field_packs
     )
 
+    callbacks = []
     if args.langfuse:
         langfuse_handler = CallbackHandler()
-        result = graph.invoke(
-            state,
-            config={"callbacks": [langfuse_handler]},
-        )
+        callbacks.append(langfuse_handler)
+    result = graph.invoke(
+        state,
+        config={"callbacks": callbacks},
+    )
 
 
 def normalize_handler(args: argparse.Namespace) -> None:
@@ -263,23 +265,20 @@ def normalize_handler(args: argparse.Namespace) -> None:
     # Load all events for prediction
     test_packs = load_test_data(config.TEST_DATA_PATH, args.preds)
 
-    # # Prepare taxonomy prompt
-    # taxonomy_ru_prompt, taxonomy_en_prompt = prompt.load_taxonomy_prompt(
-    #     config.TAXONOMY_RU_PATH, config.TAXONOMY_EN_PATH
-    # )
-
     graph = norm_agent.build_graph()
 
     state = agents.NormalizationAgentState(
         train_packs=train_packs, pred_packs=test_packs
     )
 
+    callbacks = []
     if args.langfuse:
         langfuse_handler = CallbackHandler()
-        result = graph.invoke(
-            state,
-            config={"callbacks": [langfuse_handler]},
-        )
+        callbacks.append(langfuse_handler)
+    result = graph.invoke(
+        state,
+        config={"callbacks": callbacks},
+    )
 
 
 def taxonomy_fields_handler(args: argparse.Namespace) -> None:
@@ -312,11 +311,14 @@ def taxonomy_fields_handler(args: argparse.Namespace) -> None:
 
 
 def utils_clean_handler(args: argparse.Namespace) -> None:
-    data_path = args.path
-    if data_path is None:
-        data_path = config.TEST_DATA_PATH
+    data_dir = args.path
+    if data_dir is None:
+        data_dir = config.BASE_DIR / "data"
 
-    logger.info(f"Operating at: {data_path}")
+    train_data_path = data_dir / "macos_correlation_rules"
+    test_data_path = data_dir / "windows_correlation_rules"
+
+    logger.info(f"Operating at {train_data_path} and {test_data_path}")
 
     cnt = 0
 
@@ -332,15 +334,23 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
     if args.embeddings:
         correlation_test_del.append("*.npy")
 
+        for test_dir in train_data_path.glob("*/*/tests"):
+            if not test_dir.is_dir():
+                continue
+            for f in test_dir.glob("*.npy"):
+                if f.exists():
+                    f.unlink()
+                    cnt += 1
+
     # Delete files from test data directory
     for name_pattern in correlation_del:
-        for f in data_path.glob(name_pattern):
+        for f in test_data_path.glob(name_pattern):
             if f.exists():
                 f.unlink()
                 cnt += 1
 
     # Process each correlation directory
-    for correlation_dir in data_path.glob("correlation_*"):
+    for correlation_dir in test_data_path.glob("correlation_*"):
         if not correlation_dir.is_dir():
             continue
 
@@ -492,7 +502,7 @@ def main() -> None:
     parser_utils_clean.add_argument(
         "-p",
         "--path",
-        help="Path to file with test data",
+        help="Path to file with data",
     )
     parser_utils_clean.add_argument(
         "--norm-fields",

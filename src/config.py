@@ -3,13 +3,14 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
+EMBED_MODEL = os.getenv("EMBED_MODEL", "BAAI/bge-base-en-v1.5")
+
 # LLM API configuration
-EMBED_API_URI = os.getenv("EMBED_API_URI", "http://localhost:11434")
-EMBED_MODEL = os.getenv("EMBED_MODEL", "mistral")
 SLM_API_URI = os.getenv("SLM_API_URI", "http://localhost:11434")
-SLM_MODEL = os.getenv("SLM_MODEL", "mistral")
+SLM_MODEL = os.getenv("SLM_MODEL", "qwen3:8b")
+LLM_API_KEY = os.getenv("LLM_API_KEY")
 LLM_API_URI = os.getenv("LLM_API_URI", "http://localhost:11434")
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen3:8b")
+LLM_MODEL = os.getenv("LLM_MODEL", "gemma3:12b")
 
 # Data path
 TRAIN_DATA_PATH = Path(
