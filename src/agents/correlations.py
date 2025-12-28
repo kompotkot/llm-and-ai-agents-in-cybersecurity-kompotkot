@@ -2,18 +2,24 @@ import json
 import logging
 from collections import defaultdict
 from pathlib import Path
+from itertools import islice
 from typing import List, Optional, Set, Tuple
 
 import numpy as np
+from langchain_core.messages import BaseMessage, HumanMessage
 from langchain_ollama import ChatOllama, OllamaEmbeddings
 from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, Field
 from sklearn.neighbors import NearestNeighbors
 from tqdm import tqdm
 
-from .. import config, data
+from .. import config, data, prompt
 
 logger = logging.getLogger(__name__)
+
+
+def normalize_tactics(s: str) -> str:
+    return ", ".join(part.strip().replace("-", " ").title() for part in s.split(","))
 
 
 def build_dd_index(pats: List[data.MitrePattern]) -> NearestNeighbors:
@@ -390,7 +396,7 @@ class CorrelationAgent:
 
         return state
 
-    def dump_tech(self, state: CorrelationAgentState) -> CorrelationAgentState:
+    def dump_raw_tech(self, state: CorrelationAgentState) -> CorrelationAgentState:
         mitre_by_id = {p.external_id: p for p in state.train_mitre_patterns}
 
         cnt = 0
@@ -419,6 +425,7 @@ class CorrelationAgent:
                 "tactic": ", ".join(sorted(tactics)),
                 "importance": "low, medium, high",
             }
+            pp.answer = output
 
             tests_dir = pp.pack_path / "tests"
             answer_file = tests_dir / "answer.json"
@@ -429,6 +436,75 @@ class CorrelationAgent:
             cnt += 1
 
         logger.info(f"Dumped {cnt} answers")
+
+        return state
+
+    def verify_tactic_importance(
+        self, state: CorrelationAgentState
+    ) -> CorrelationAgentState:
+        system_prompt = prompt.load_system_verify_tactic_prompt()
+
+        mitre_by_id = {p.external_id: p for p in state.train_mitre_patterns}
+
+        cnt = 0
+        for pp in tqdm(state.norm_field_packs, desc="Verify packs"):
+            ff_norm_fields = []
+
+            for pe in islice(pp.events, 3):
+                ff_norm_fields.append(pe.filtered_norm_text)
+
+            pattern = mitre_by_id[pp.pack_tech_id]
+
+            verify_prompt = prompt.load_verify_tactic_prompt(
+                technique=pp.answer["technique"],
+                tactic=normalize_tactics(pp.answer["tactic"]),
+                importance=pp.answer["importance"],
+                description=pattern.description,
+                ff_norm_fields="\n".join(ff_norm_fields),
+                correlation_path=pp.pack_path / "tests",
+            )
+
+            messages: list[BaseMessage] = [
+                system_prompt,
+                HumanMessage(content=verify_prompt),
+            ]
+
+            result = self.llm.invoke(messages)
+
+            llm_tactic = None
+            llm_importance = None
+
+            try:
+                llm_response = json.loads(result.content)
+                llm_tactic = llm_response.get("tactic")
+                llm_importance = llm_response.get("importance")
+            except (json.JSONDecodeError, AttributeError) as e:
+                logger.warning(
+                    f"Failed to parse LLM response as JSON for {pp.pack_path}: {e}"
+                )
+
+            # Update answer with LLM values if valid, otherwise keep original
+            if llm_tactic is not None:
+                pp.answer["tactic"] = llm_tactic.capitalize().strip()
+            else:
+                logger.warning(
+                    f"LLM did not provide valid tactic for {pp.pack_path}, keeping original"
+                )
+
+            if llm_importance is not None:
+                pp.answer["importance"] = llm_importance.lower().strip()
+            else:
+                logger.warning(
+                    f"LLM did not provide valid importance for {pp.pack_path}, keeping original"
+                )
+
+            answer_file = pp.pack_path / "tests" / "answer.json"
+            with answer_file.open("w", encoding="utf-8") as f:
+                json.dump(pp.answer, f)
+
+            cnt += 1
+
+        logger.info(f"Dumped {cnt} verified answers")
 
         return state
 
@@ -451,7 +527,8 @@ class CorrelationAgent:
         builder.add_node("filter_norm_fields", self.filter_norm_fields)
         builder.add_node("embed_filter_norm_fields", self.embed_filter_norm_fields)
         builder.add_node("calc_neighbors_tech", self.calc_neighbors_tech)
-        builder.add_node("dump_tech", self.dump_tech)
+        builder.add_node("dump_raw_tech", self.dump_raw_tech)
+        builder.add_node("verify_tactic_importance", self.verify_tactic_importance)
 
         # The flow
         builder.add_edge(START, "embed_train_mitre_patterns")
@@ -459,7 +536,8 @@ class CorrelationAgent:
         builder.add_edge("filtered_fields", "filter_norm_fields")
         builder.add_edge("filter_norm_fields", "embed_filter_norm_fields")
         builder.add_edge("embed_filter_norm_fields", "calc_neighbors_tech")
-        builder.add_edge("calc_neighbors_tech", "dump_tech")
-        builder.add_edge("dump_tech", END)
+        builder.add_edge("calc_neighbors_tech", "dump_raw_tech")
+        builder.add_edge("dump_raw_tech", "verify_tactic_importance")
+        builder.add_edge("verify_tactic_importance", END)
 
         return builder.compile()

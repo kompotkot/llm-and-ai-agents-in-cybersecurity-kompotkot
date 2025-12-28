@@ -53,6 +53,8 @@ class EventPack(BaseModel):
     pack_sub_tech_id: Optional[str] = None
     pack_tech_score: Optional[float] = None
 
+    answer: Optional[dict] = None
+
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 

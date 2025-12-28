@@ -245,3 +245,65 @@ PROMPT_IMPORTANT_FIELDS = PromptTemplate(
     ),
     input_variables=["taxonomy_guideline"],
 )
+
+PROMPT_SYSTEM_VERIFY_TACTIC_TEMPLATE = """
+You are a cybersecurity analysis assistant specializing in MITRE ATT&CK.
+Output ONLY a valid flat JSON object.
+""".strip()
+
+
+def load_system_verify_tactic_prompt() -> SystemMessage:
+    prompt = PROMPT_SYSTEM_VERIFY_TACTIC_TEMPLATE
+
+    if logger.isEnabledFor(logging.DEBUG):
+        prompt_file = config.TEST_DATA_PATH / "system_verify_tactic_prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+        logger.debug(
+            f"System verify tactic prompt dumped at: {prompt_file.relative_to(config.BASE_DIR)}"
+        )
+
+    return SystemMessage(content=prompt)
+
+
+PROMPT_VERIFY_TACTIC_TEMPLATE = """
+Guidelines:
+- Choose one of provided tactic based on MITRE Technique with Description and Normalized security events.
+- Choose one of provided importance based on MITRE Technique with Description and Normalized security events.
+- Base your decision on attacker intent and security impact.
+- Preserve JSON validity and keep the output flat with keys tactic and importance.
+
+MITRE Technique: {technique}
+MITRE Technique Description: {description}
+
+Normalized security events:
+{ff_norm_fields}
+
+Output ONLY valid JSON object without explanations with ONE tactic and ONE importance in format:
+{{
+    "tactic": "<one of: {tactic}>",
+    "importance": "<one of: {importance}>"
+}}
+""".strip()
+
+
+def load_verify_tactic_prompt(
+    technique: str,
+    tactic: str,
+    importance: str,
+    description: str,
+    ff_norm_fields: str,
+    correlation_path: Path,
+) -> str:
+    prompt = PROMPT_VERIFY_TACTIC_TEMPLATE.format(
+        technique=technique,
+        description=description.strip(),
+        ff_norm_fields=ff_norm_fields.strip(),
+        tactic=tactic,
+        importance=importance,
+    )
+
+    if logger.isEnabledFor(logging.DEBUG):
+        prompt_file = correlation_path / "verify_tactic_prompt.txt"
+        prompt_file.write_text(prompt, encoding="utf-8")
+
+    return prompt
