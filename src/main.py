@@ -320,31 +320,44 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
 
     cnt = 0
 
-    for name in [
-        "system_prompt.txt",
-        "system_clean_prompt.txt",
-        "taxonomy_fields_prompt.txt",
-    ]:
-        system_prompt = data_path / name
-    if system_prompt.exists():
-        system_prompt.unlink()
-        cnt += 1
+    correlation_del = [
+        "*.txt",
+    ]
+    correlation_test_del = [
+        "*.txt",
+    ]
 
-    for test_dir in data_path.glob("*/tests"):
-        if not test_dir.is_dir():
-            continue
+    if args.norm_fields:
+        correlation_test_del.append("norm_fields_*.json")
+    if args.embeddings:
+        correlation_test_del.append("*.npy")
 
-        for name_pattern in [
-            "norm_fields_*.json",
-            "prompt_*.txt",
-            "clean_prompt_*.txt",
-        ]:
-            for f in test_dir.glob(name_pattern):
-                if not f.exists():
-                    continue
-
+    # Delete files from test data directory
+    for name_pattern in correlation_del:
+        for f in data_path.glob(name_pattern):
+            if f.exists():
                 f.unlink()
                 cnt += 1
+
+    # Process each correlation directory
+    for correlation_dir in data_path.glob("correlation_*"):
+        if not correlation_dir.is_dir():
+            continue
+
+        # Delete answer.json from correlation directory
+        answer_file = correlation_dir / "answer.json"
+        if answer_file.exists():
+            answer_file.unlink()
+            cnt += 1
+
+        # Delete files from tests subdirectory
+        test_dir = correlation_dir / "tests"
+        if test_dir.is_dir():
+            for name_pattern in correlation_test_del:
+                for f in test_dir.glob(name_pattern):
+                    if f.exists():
+                        f.unlink()
+                        cnt += 1
 
     logger.info(f"Removed {cnt} files")
 
@@ -480,6 +493,16 @@ def main() -> None:
         "-p",
         "--path",
         help="Path to file with test data",
+    )
+    parser_utils_clean.add_argument(
+        "--norm-fields",
+        action="store_true",
+        help="Set this flag do delete norm fields",
+    )
+    parser_utils_clean.add_argument(
+        "--embeddings",
+        action="store_true",
+        help="Set this flag do delete embeddings",
     )
     parser_utils_clean.set_defaults(func=utils_clean_handler)
 

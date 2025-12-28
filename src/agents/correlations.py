@@ -1,8 +1,8 @@
 import json
 import logging
 from collections import defaultdict
-from pathlib import Path
 from itertools import islice
+from pathlib import Path
 from typing import List, Optional, Set, Tuple
 
 import numpy as np
@@ -427,8 +427,7 @@ class CorrelationAgent:
             }
             pp.answer = output
 
-            tests_dir = pp.pack_path / "tests"
-            answer_file = tests_dir / "answer.json"
+            answer_file = pp.pack_path / "answer.json"
 
             with answer_file.open("w", encoding="utf-8") as f:
                 json.dump(output, f)
@@ -498,7 +497,7 @@ class CorrelationAgent:
                     f"LLM did not provide valid importance for {pp.pack_path}, keeping original"
                 )
 
-            answer_file = pp.pack_path / "tests" / "answer.json"
+            answer_file = pp.pack_path / "answer.json"
             with answer_file.open("w", encoding="utf-8") as f:
                 json.dump(pp.answer, f)
 
