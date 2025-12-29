@@ -354,8 +354,8 @@ def utils_clean_handler(args: argparse.Namespace) -> None:
         if not correlation_dir.is_dir():
             continue
 
-        # Delete answer.json from correlation directory
-        answer_file = correlation_dir / "answer.json"
+        # Delete answers.json from correlation directory
+        answer_file = correlation_dir / "answers.json"
         if answer_file.exists():
             answer_file.unlink()
             cnt += 1
@@ -394,10 +394,10 @@ def utils_dump_handler(args: argparse.Namespace) -> None:
         output_corr_dir = output_correlation_dir / correlation_dir.name
         output_corr_dir.mkdir(parents=True, exist_ok=True)
 
-        # Copy in it correlation_*/answer.json
-        answer_file = correlation_dir / "answer.json"
+        # Copy in it correlation_*/answers.json
+        answer_file = correlation_dir / "answers.json"
         if answer_file.exists():
-            (output_corr_dir / "answer.json").write_text(
+            (output_corr_dir / "answers.json").write_text(
                 answer_file.read_text(encoding="utf-8"), encoding="utf-8"
             )
 

@@ -432,7 +432,7 @@ class CorrelationAgent:
             }
             pp.answer = output
 
-            answer_file = pp.pack_path / "answer.json"
+            answer_file = pp.pack_path / "answers.json"
 
             with answer_file.open("w", encoding="utf-8") as f:
                 json.dump(output, f)
@@ -502,7 +502,7 @@ class CorrelationAgent:
                     f"LLM did not provide valid importance for {pp.pack_path}, keeping original"
                 )
 
-            answer_file = pp.pack_path / "answer.json"
+            answer_file = pp.pack_path / "answers.json"
             with answer_file.open("w", encoding="utf-8") as f:
                 json.dump(pp.answer, f)
 
