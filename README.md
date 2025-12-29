@@ -110,3 +110,7 @@ INFO:src.agents.correlations:Dumped 54 answers
 Verify packs: 100%|████████████████████████████████████████████████████████████████████| 54/54 [01:41<00:00,  1.89s/it]
 INFO:src.agents.correlations:Dumped 54 verified answers
 ```
+
+### Локализация
+
+WIP
